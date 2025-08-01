@@ -5,7 +5,114 @@ import { slackService } from "./services/slack";
 import { calendarService } from "./services/calendar";
 import { analyticsService } from "./services/analytics";
 import { schedulerService } from "./services/scheduler";
-import { insertUserSchema, insertIntegrationSchema, insertFocusSessionSchema } from "@shared/schema";
+import { insertUserSchema, insertIntegrationSchema, insertFocusSessionSchema, type InsertMeeting } from "@shared/schema";
+
+// Generate realistic test meeting data for a user
+async function generateTestMeetingData(userId: string) {
+  const meetingTypes = [
+    { title: "Weekly Team Standup", duration: 30, type: "video_call" as const },
+    { title: "Project Review Meeting", duration: 60, type: "video_call" as const },
+    { title: "1:1 with Manager", duration: 30, type: "video_call" as const },
+    { title: "Client Presentation", duration: 45, type: "video_call" as const },
+    { title: "Product Planning Session", duration: 90, type: "video_call" as const },
+    { title: "Design Review", duration: 60, type: "video_call" as const },
+    { title: "Sprint Planning", duration: 120, type: "video_call" as const },
+    { title: "All Hands Meeting", duration: 45, type: "video_call" as const },
+    { title: "Coffee Chat", duration: 30, type: "in_person" as const },
+    { title: "Technical Deep Dive", duration: 90, type: "video_call" as const },
+    { title: "Customer Feedback Session", duration: 60, type: "video_call" as const },
+    { title: "Strategy Planning", duration: 75, type: "video_call" as const }
+  ];
+
+  const attendeeOptions = [
+    [{ email: "sarah@company.com", name: "Sarah Johnson" }],
+    [{ email: "mike@company.com", name: "Mike Chen" }, { email: "alex@company.com", name: "Alex Rodriguez" }],
+    [{ email: "manager@company.com", name: "Jennifer Smith" }],
+    [{ email: "client@external.com", name: "David Wilson" }, { email: "sales@company.com", name: "Lisa Brown" }],
+    [{ email: "team@company.com", name: "Development Team" }]
+  ];
+
+  // Generate meetings for the past 7 days and next 7 days
+  const today = new Date();
+  const startDate = new Date(today);
+  startDate.setDate(today.getDate() - 7);
+
+  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(startDate.getDate() + dayOffset);
+    
+    // Skip weekends for most meetings
+    const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+    
+    // Generate 2-6 meetings per weekday, 0-2 on weekends
+    const meetingCount = isWeekend 
+      ? Math.floor(Math.random() * 3) // 0-2 meetings
+      : Math.floor(Math.random() * 5) + 2; // 2-6 meetings
+    
+    const dailyMeetings: InsertMeeting[] = [];
+    let totalDailyTime = 0;
+    const maxDailyTime = isWeekend ? 120 : 480; // 2 hours weekend, 8 hours max weekday
+    
+    for (let i = 0; i < meetingCount && totalDailyTime < maxDailyTime; i++) {
+      const meetingTemplate = meetingTypes[Math.floor(Math.random() * meetingTypes.length)];
+      const attendees = attendeeOptions[Math.floor(Math.random() * attendeeOptions.length)];
+      
+      // Don't exceed daily time limit
+      if (totalDailyTime + meetingTemplate.duration > maxDailyTime) {
+        continue;
+      }
+      
+      // Generate meeting time (9 AM to 5 PM on weekdays, more flexible on weekends)
+      const startHour = isWeekend 
+        ? Math.floor(Math.random() * 6) + 10 // 10 AM - 4 PM
+        : Math.floor(Math.random() * 8) + 9;  // 9 AM - 5 PM
+      const startMinute = Math.floor(Math.random() * 4) * 15; // 0, 15, 30, 45 minutes
+      
+      const startTime = new Date(currentDate);
+      startTime.setHours(startHour, startMinute, 0, 0);
+      
+      const endTime = new Date(startTime);
+      endTime.setMinutes(startTime.getMinutes() + meetingTemplate.duration);
+      
+      // Check for conflicts with existing meetings
+      const hasConflict = dailyMeetings.some(meeting => {
+        return (startTime < meeting.endTime && endTime > meeting.startTime);
+      });
+      
+      if (!hasConflict) {
+        dailyMeetings.push({
+          userId,
+          externalId: `test-${userId}-${dayOffset}-${i}-${Date.now()}`,
+          title: meetingTemplate.title,
+          startTime,
+          endTime,
+          duration: meetingTemplate.duration,
+          attendees,
+          source: "test_data",
+          meetingType: meetingTemplate.type
+        });
+        
+        totalDailyTime += meetingTemplate.duration;
+      }
+    }
+    
+    // Sort meetings by start time and save them
+    dailyMeetings.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+    
+    for (const meeting of dailyMeetings) {
+      try {
+        await storage.createMeeting(meeting);
+      } catch (error) {
+        // Skip if already exists (based on externalId uniqueness)
+        continue;
+      }
+    }
+  }
+
+  console.log(`Generated test meeting data for user ${userId}`);
+}
+
+export { generateTestMeetingData };
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -401,6 +508,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(status);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch integration status" });
+    }
+  });
+
+  // Test data generation endpoint
+  app.post("/api/generate-test-data", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID required" });
+      }
+
+      await generateTestMeetingData(userId);
+      res.json({ success: true, message: "Test meeting data generated successfully" });
+    } catch (error) {
+      console.error("Failed to generate test data:", error);
+      res.status(500).json({ error: "Failed to generate test data" });
+    }
+  });
+
+  // Dashboard endpoint that includes meetings
+  app.get("/api/dashboard/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Get this week's data
+      const today = new Date();
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - today.getDay()); // Start of week (Sunday)
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6); // End of week (Saturday)
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      const meetings = await storage.getUserMeetings(userId, startOfWeek, endOfWeek);
+      const metrics = await storage.getProductivityMetrics(userId, startOfWeek, endOfWeek);
+      
+      res.json({
+        user: {
+          id: user.id,
+          name: user.name,
+          timezone: user.timezone || 'America/New_York'
+        },
+        meetings,
+        metrics,
+        weekRange: {
+          start: startOfWeek,
+          end: endOfWeek
+        }
+      });
+    } catch (error) {
+      console.error("Dashboard API error:", error);
+      res.status(500).json({ error: "Failed to load dashboard data" });
     }
   });
 

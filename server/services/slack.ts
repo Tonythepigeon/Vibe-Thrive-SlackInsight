@@ -743,6 +743,25 @@ class SlackService {
         }
       });
       blocks.push({ type: "divider" });
+    } else if (!todaysMeetings.length && !weeklyMeetings.length) {
+      // Show demo data option if no meetings at all
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "📅 *No meetings found*\n\nTo see your productivity dashboard in action, you can generate some demo meeting data!"
+        },
+        accessory: {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "Generate Demo Data",
+          },
+          action_id: "generate_demo_data",
+          value: user.id
+        }
+      });
+      blocks.push({ type: "divider" });
     }
 
     // Add weekly stats
@@ -790,7 +809,7 @@ class SlackService {
             type: "plain_text",
             text: "View Full Dashboard"
           },
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard`,
+          url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?userId=${user.id}`,
           action_id: "view_dashboard"
         }
       ]
@@ -878,6 +897,9 @@ class SlackService {
       case "defer_break":
         console.log("Handling defer_break action");
         return await this.deferBreakSuggestion(action.value, user.id);
+      case "generate_demo_data":
+        console.log("Handling generate_demo_data action");
+        return await this.generateDemoDataFromSlack(action.value, user.id);
       default:
         console.log(`Unknown action_id: ${action.action_id}`);
         return { response_action: "clear" };
@@ -1548,6 +1570,48 @@ class SlackService {
     }
 
     return { suggest: true, reason: "No meetings scheduled soon" };
+  }
+
+  // Generate demo data from Slack button
+  private async generateDemoDataFromSlack(userId: string, slackUserId: string) {
+    try {
+      // Import the function from routes
+      const { generateTestMeetingData } = await import('../routes');
+      await generateTestMeetingData(userId);
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "✅ *Demo data generated!*\n\nGreat! I've created realistic meeting data for the past and upcoming weeks. Try `/productivity` again to see your updated summary, or click the button below to view your full dashboard."
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "View Full Dashboard"
+                },
+                url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?userId=${userId}`,
+                action_id: "view_dashboard"
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Generate demo data error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to generate demo data. Please try again."
+      };
+    }
   }
 }
 
