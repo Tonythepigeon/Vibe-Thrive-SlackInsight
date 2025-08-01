@@ -1,0 +1,21 @@
+Productivity and Meeting Insights
+Data Integration: The agent needs to connect with an employee's calendar and communication tools (e.g., Google Calendar, Microsoft Outlook, Slack, Microsoft Teams).
+Meeting Analytics:
+Total Meeting Time: Calculate and display the total number of hours spent in meetings over a selected period (daily, weekly, monthly).
+Meeting Frequency: Show the number of meetings held.
+Meeting Distribution: Analyze and visualize the distribution of meetings throughout the day. For example, "You had 3 hours of back-to-back meetings this morning."
+Productivity Metrics: Track and present data on an individual's work patterns, such as the amount of time spent in "focus time" versus collaborative tools.
+Summary Generation: Provide a concise, easy-to-read summary of an employee's day or week. This could be delivered via a daily digest email or a pop-up notification.
+2. Proactive Wellbeing Suggestions
+Break Suggestions:
+Rule-Based: The agent should proactively suggest breaks based on pre-defined rules, such as "You've been in meetings for 90 minutes straight, consider taking a 10-minute break."
+Context-Aware: Suggestions should be intelligent, for instance, a break suggestion should not interrupt a meeting. The agent could suggest breaks between meetings or at natural lulls in the workday.
+Suggests different types of breaks - hydration, stretch, meditate..
+Meeting Catch-up (stretch goal):
+Meeting Transcripts: Use a large language model (LLM) to analyze transcripts from meeting recording tools (e.g., Teams, Zoom).
+Summary Generation: Generate a concise summary of the key decisions, action items, and important discussions from meetings.
+Skip Suggestion: Based on the generated summary and an employee's role/calendar, the agent can suggest which meetings might be skippable. For example, "You were a recipient on this meeting invite, but the summary shows no action items for you. Here are the key takeaways in case you need them."
+Personalized Productivity Tips: Provide actionable tips to improve productivity, such as "Block out 30 minutes for deep work before your first meeting tomorrow."
+Focus Mode Activation
+Blocks calendar + mutes Slack; starts deep work timer.
+Create Slack status + external link to timer or lo-fi playlist
