@@ -19,15 +19,33 @@ class SlackService {
 
     // Try to get team-specific token from database
     if (teamId) {
-      const team = await storage.getSlackTeam(teamId);
-      if (team && team.botToken) {
-        const client = new WebClient(team.botToken);
-        this.clients.set(teamId, client);
-        return client;
+      try {
+        const team = await storage.getSlackTeam(teamId);
+        if (team && team.botToken) {
+          const client = new WebClient(team.botToken);
+          this.clients.set(teamId, client);
+          return client;
+        }
+      } catch (error) {
+        console.error("Failed to get team from database:", error);
       }
     }
 
-    return this.clients.get("default") || new WebClient();
+    // Fallback to default client with environment bot token
+    if (this.clients.has("default")) {
+      return this.clients.get("default")!;
+    }
+
+    // Create default client if we have a bot token
+    if (process.env.SLACK_BOT_TOKEN) {
+      const defaultClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+      this.clients.set("default", defaultClient);
+      return defaultClient;
+    }
+
+    // If no token available, create a client anyway (will fail auth but won't crash)
+    console.warn("No Slack bot token available - commands may fail");
+    return new WebClient();
   }
 
   async handleSlackEvents(req: any, res: any) {
@@ -236,7 +254,33 @@ class SlackService {
     }
   }
 
+  private async ensureTeamStored(teamId: string) {
+    try {
+      // Check if team already exists
+      const existingTeam = await storage.getSlackTeam(teamId);
+      if (existingTeam) {
+        return;
+      }
+
+      // If team doesn't exist and we have a bot token, store basic team info
+      if (process.env.SLACK_BOT_TOKEN) {
+        await storage.createSlackTeam({
+          slackTeamId: teamId,
+          teamName: "Unknown Team", // Will be updated later via OAuth
+          botToken: process.env.SLACK_BOT_TOKEN,
+          botUserId: "Unknown", // Will be updated later
+        });
+        console.log(`Stored team info for ${teamId}`);
+      }
+    } catch (error) {
+      console.error("Failed to ensure team is stored:", error);
+    }
+  }
+
   private async processFocusCommand(userId: string, teamId: string, duration: number) {
+    // Ensure team info is stored
+    await this.ensureTeamStored(teamId);
+
     let user = await storage.getUserBySlackId(userId);
     
     // If user doesn't exist, create them automatically
@@ -331,6 +375,9 @@ class SlackService {
   }
 
   private async processBreakCommand(userId: string, teamId: string, breakType: string) {
+    // Ensure team info is stored
+    await this.ensureTeamStored(teamId);
+
     let user = await storage.getUserBySlackId(userId);
     
     // If user doesn't exist, create them automatically
@@ -420,6 +467,9 @@ class SlackService {
   }
 
   private async processProductivityCommand(userId: string, teamId: string) {
+    // Ensure team info is stored
+    await this.ensureTeamStored(teamId);
+
     let user = await storage.getUserBySlackId(userId);
     
     // If user doesn't exist, create them automatically
