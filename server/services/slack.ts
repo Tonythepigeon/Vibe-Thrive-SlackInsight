@@ -577,11 +577,44 @@ class SlackService {
       }).catch(console.error);
     }
 
+    // Check if this is a good time for a break based on calendar
+    const breakCheck = await this.shouldSuggestBreak(user.id);
+    
+    if (!breakCheck.suggest) {
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `⏰ *Break timing suggestion*\n\n${breakCheck.reason}. Maybe try taking a break after your meeting ends?\n\n💡 *Quick tip:* You can still take a micro-break (stretch, deep breaths) even during busy times!`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Take Break Anyway"
+                },
+                style: "primary",
+                action_id: "take_break_override",
+                value: user.id
+              }
+            ]
+          }
+        ]
+      };
+    }
+
     const suggestion = await storage.createBreakSuggestion({
       userId: user.id,
       type: breakType,
       message: `You requested a ${breakType} break`,
-      reason: "user_requested"
+      reason: breakCheck.reason
     });
 
     return {
@@ -591,7 +624,7 @@ class SlackService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `☕ *Break time!*\n${this.getBreakMessage(breakType)}`
+            text: `☕ *Break time!*\n${this.getBreakMessage(breakType)}\n\n✨ *Perfect timing:* ${breakCheck.reason}`
           }
         },
         {
@@ -672,60 +705,158 @@ class SlackService {
     const today = new Date();
     const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
     
+    // Get weekly stats
     const metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
-    const meetings = await storage.getUserMeetings(user.id, weekAgo, today);
+    const weeklyMeetings = await storage.getUserMeetings(user.id, weekAgo, today);
+    
+    // Get today's meetings specifically
+    const todaysMeetings = await this.getTodaysMeetings(user.id);
     
     const totalMeetingTime = metrics.reduce((sum, m) => sum + (m.totalMeetingTime || 0), 0);
     const totalFocusTime = metrics.reduce((sum, m) => sum + (m.focusTime || 0), 0);
     const totalBreaks = metrics.reduce((sum, m) => sum + (m.breaksAccepted || 0), 0);
 
-    return {
-      response_type: "ephemeral",
-      blocks: [
+    // Format today's meetings
+    const todaysMeetingText = this.formatTodaysMeetings(todaysMeetings, user.timezone || 'America/New_York');
+    
+    // Get insights using calendar service
+    const { calendarService } = await import('./calendar');
+    const insights = await calendarService.generateProductivityInsights(user.id);
+
+    const blocks: any[] = [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "📊 Your Productivity Summary"
+        }
+      }
+    ];
+
+    // Add today's meetings section if there are any
+    if (todaysMeetings.length > 0) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `📅 *Today's Meetings*\n${todaysMeetingText}`
+        }
+      });
+      blocks.push({ type: "divider" });
+    }
+
+    // Add weekly stats
+    blocks.push({
+      type: "section",
+      fields: [
         {
-          type: "header",
-          text: {
-            type: "plain_text",
-            text: "📊 Your Productivity Summary (Last 7 Days)"
-          }
+          type: "mrkdwn",
+          text: `*Meeting Time (7 days):*\n${Math.round(totalMeetingTime / 60)}h ${totalMeetingTime % 60}m`
         },
         {
-          type: "section",
-          fields: [
-            {
-              type: "mrkdwn",
-              text: `*Meeting Time:*\n${Math.round(totalMeetingTime / 60)}h ${totalMeetingTime % 60}m`
-            },
-            {
-              type: "mrkdwn",
-              text: `*Focus Time:*\n${Math.round(totalFocusTime / 60)}h ${totalFocusTime % 60}m`
-            },
-            {
-              type: "mrkdwn",
-              text: `*Meetings:*\n${meetings.length} total`
-            },
-            {
-              type: "mrkdwn",
-              text: `*Breaks Taken:*\n${totalBreaks} breaks`
-            }
-          ]
+          type: "mrkdwn",
+          text: `*Focus Time:*\n${Math.round(totalFocusTime / 60)}h ${totalFocusTime % 60}m`
         },
         {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: {
-                type: "plain_text",
-                text: "View Full Dashboard"
-              },
-              url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard`,
-              action_id: "view_dashboard"
-            }
-          ]
+          type: "mrkdwn",
+          text: `*Total Meetings:*\n${weeklyMeetings.length} meetings`
+        },
+        {
+          type: "mrkdwn",
+          text: `*Breaks Taken:*\n${totalBreaks} breaks`
         }
       ]
+    });
+
+    // Add insights if available
+    if (insights.length > 0) {
+      blocks.push({ type: "divider" });
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `💡 *Productivity Insights*\n${insights.map(insight => `• ${insight}`).join('\n')}`
+        }
+      });
+    }
+
+    // Add action button
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "View Full Dashboard"
+          },
+          url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard`,
+          action_id: "view_dashboard"
+        }
+      ]
+    });
+
+    return {
+      response_type: "ephemeral",
+      blocks
     };
+  }
+
+  private formatTodaysMeetings(meetings: any[], timezone: string): string {
+    if (meetings.length === 0) {
+      return "No meetings scheduled for today 🎉";
+    }
+
+    const now = new Date();
+    let formatted = '';
+
+    // Sort meetings by start time
+    const sortedMeetings = meetings.sort((a, b) => 
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+
+    sortedMeetings.forEach((meeting, index) => {
+      const startTime = new Date(meeting.startTime);
+      const endTime = new Date(meeting.endTime);
+      const isCurrentlyInMeeting = now >= startTime && now <= endTime;
+      const isPast = now > endTime;
+      const isUpcoming = now < startTime;
+
+      const startFormatted = startTime.toLocaleTimeString('en-US', {
+        timeZone: timezone,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      const endFormatted = endTime.toLocaleTimeString('en-US', {
+        timeZone: timezone,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      let status = '';
+      if (isCurrentlyInMeeting) {
+        status = '🔴 *In progress*';
+      } else if (isPast) {
+        status = '✅ *Completed*';
+      } else if (isUpcoming) {
+        const minutesUntil = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
+        if (minutesUntil <= 15) {
+          status = '🟡 *Starting soon*';
+        } else {
+          status = '⏰ *Upcoming*';
+        }
+      }
+
+      formatted += `${status} ${startFormatted}-${endFormatted}: ${meeting.title || 'Untitled Meeting'}`;
+      if (index < sortedMeetings.length - 1) {
+        formatted += '\n';
+      }
+    });
+
+    return formatted;
   }
 
   private async handleBlockActions(payload: any) {
@@ -741,6 +872,9 @@ class SlackService {
       case "take_break":
         console.log("Handling take_break action");
         return await this.acceptBreakSuggestion(action.value, user.id);
+      case "take_break_override":
+        console.log("Handling take_break_override action");
+        return await this.forceBreakSuggestion(action.value, user.id);
       case "defer_break":
         console.log("Handling defer_break action");
         return await this.deferBreakSuggestion(action.value, user.id);
@@ -859,6 +993,43 @@ class SlackService {
         replace_original: true,
         text: "👍 No problem! Remember to take breaks when you can - they're important for your wellbeing!"
       };
+    }
+  }
+
+  // Force break when user chooses "Take Break Anyway"
+  private async forceBreakSuggestion(userId: string, slackUserId: string) {
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      // Set coffee break status for 15 minutes (shorter since they're busy)
+      await this.setBreakMode(user.id, 15);
+
+      // Log activity
+      storage.logActivity({
+        userId: user.id,
+        action: "break_forced",
+        details: { 
+          duration: 15,
+          reason: "override_calendar_conflict"
+        }
+      }).catch(console.error);
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "☕ *Quick break time!*\n\nYou chose to take a break anyway - good for you! Taking a 15-minute break even during busy times.\n\n💡 *Quick break tips:*\n• Do some desk stretches\n• Take a few deep breaths\n• Step outside for fresh air\n• Stay hydrated"
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Force break error:", error);
+      return { response_action: "clear" };
     }
   }
 
@@ -1315,6 +1486,68 @@ class SlackService {
         }
       ]
     });
+  }
+
+  // Meeting-aware break suggestion methods
+  private async getTodaysMeetings(userId: string) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+    
+    return await storage.getUserMeetings(userId, startOfDay, endOfDay);
+  }
+
+  private async isCurrentlyInMeeting(userId: string): Promise<boolean> {
+    const now = new Date();
+    const meetings = await this.getTodaysMeetings(userId);
+    
+    return meetings.some(meeting => {
+      const startTime = new Date(meeting.startTime);
+      const endTime = new Date(meeting.endTime);
+      return now >= startTime && now <= endTime;
+    });
+  }
+
+  private async getNextMeetingTime(userId: string): Promise<Date | null> {
+    const now = new Date();
+    const meetings = await this.getTodaysMeetings(userId);
+    
+    const upcomingMeetings = meetings
+      .filter(meeting => new Date(meeting.startTime) > now)
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    
+    return upcomingMeetings.length > 0 ? new Date(upcomingMeetings[0].startTime) : null;
+  }
+
+  private async shouldSuggestBreak(userId: string): Promise<{ suggest: boolean; reason: string }> {
+    // Check if currently in a meeting
+    const inMeeting = await this.isCurrentlyInMeeting(userId);
+    if (inMeeting) {
+      return { suggest: false, reason: "Currently in a meeting" };
+    }
+
+    // Check if next meeting is soon (within 10 minutes)
+    const nextMeeting = await this.getNextMeetingTime(userId);
+    if (nextMeeting) {
+      const timeUntilMeeting = nextMeeting.getTime() - Date.now();
+      const minutesUntilMeeting = Math.floor(timeUntilMeeting / (1000 * 60));
+      
+      if (minutesUntilMeeting <= 10) {
+        return { 
+          suggest: false, 
+          reason: `Next meeting in ${minutesUntilMeeting} minutes` 
+        };
+      }
+      
+      if (minutesUntilMeeting <= 30) {
+        return { 
+          suggest: true, 
+          reason: `Perfect timing! ${minutesUntilMeeting} minutes until your next meeting` 
+        };
+      }
+    }
+
+    return { suggest: true, reason: "No meetings scheduled soon" };
   }
 }
 
