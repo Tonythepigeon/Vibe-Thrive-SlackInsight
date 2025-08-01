@@ -510,6 +510,16 @@ export class DatabaseStorage implements IStorage {
       throw error;
     }
   }
+
+  // Clear all meetings for a user (for demo purposes)
+  async clearUserMeetings(userId: string): Promise<void> {
+    try {
+      await this.getDb().delete(meetings).where(eq(meetings.userId, userId));
+    } catch (error) {
+      console.error("Failed to clear meetings:", error);
+      throw error;
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();

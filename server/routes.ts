@@ -9,6 +9,18 @@ import { insertUserSchema, insertIntegrationSchema, insertFocusSessionSchema, ty
 
 // Generate realistic test meeting data for a user
 async function generateTestMeetingData(userId: string) {
+  console.log(`Starting meeting data generation for user ${userId}`);
+  
+  // First, clear existing meetings and related data
+  try {
+    await storage.clearUserMeetings(userId);
+    await storage.clearUserProductivityMetrics(userId);
+    console.log(`Cleared existing meetings and metrics for user ${userId}`);
+  } catch (error) {
+    console.error("Failed to clear existing data:", error);
+    // Continue anyway - we want to generate new data even if clearing fails
+  }
+
   const meetingTypes = [
     { title: "Weekly Team Standup", duration: 30, type: "video_call" as const },
     { title: "Quick Check-in", duration: 30, type: "video_call" as const },
@@ -129,17 +141,28 @@ async function generateTestMeetingData(userId: string) {
   // After generating meetings, calculate productivity metrics for each day
   const { analyticsService } = await import('./services/analytics');
   
+  let totalMeetingsGenerated = 0;
   for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + dayOffset);
     
+    // Skip weekends when calculating metrics too
+    const dayOfWeek = currentDate.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      continue;
+    }
+    
     try {
       await analyticsService.processProductivityMetrics(userId, currentDate);
+      // Count meetings for this day
+      const dayMeetings = await storage.getMeetingsByDate(userId, currentDate);
+      totalMeetingsGenerated += dayMeetings.length;
     } catch (error) {
       console.error(`Failed to process productivity metrics for ${currentDate.toDateString()}:`, error);
     }
   }
   
+  console.log(`✅ Generated ${totalMeetingsGenerated} total meetings across 10 weekdays for user ${userId}`);
   console.log(`Generated productivity metrics for user ${userId}`);
 }
 
