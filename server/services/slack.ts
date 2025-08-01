@@ -181,14 +181,30 @@ class SlackService {
           try {
             console.log(`Processing user token for ${result.authed_user.id}`);
             
+            // Get user info from Slack API to get their timezone
+            let userTimezone = 'America/New_York'; // Default
+            let userName = 'Slack User';
+            try {
+              const userClient = new WebClient(result.authed_user.access_token);
+              const userInfo = await userClient.users.info({ user: result.authed_user.id! });
+              if (userInfo.ok && userInfo.user) {
+                userTimezone = userInfo.user.tz || 'America/New_York';
+                userName = userInfo.user.real_name || userInfo.user.name || 'Slack User';
+                console.log(`Got user info: name=${userName}, timezone=${userTimezone}`);
+              }
+            } catch (userInfoError) {
+              console.error("Failed to get user info (using defaults):", userInfoError);
+            }
+            
             // Check if user already exists
             let user = await storage.getUserBySlackId(result.authed_user.id!);
             
             if (user) {
               console.log(`User ${result.authed_user.id} already exists`);
-              // Update existing user with user token
+              // Update existing user with timezone and name
               await storage.updateUser(user.id, {
-                name: result.authed_user.id!, // Will be updated when we get more info
+                name: userName,
+                timezone: userTimezone
               });
             } else {
               console.log(`Creating new user ${result.authed_user.id}`);
@@ -196,7 +212,8 @@ class SlackService {
               user = await storage.createUser({
                 slackUserId: result.authed_user.id!,
                 email: `${result.authed_user.id}@slack.local`, // Placeholder, will be updated
-                name: "Slack User",
+                name: userName,
+                timezone: userTimezone,
                 slackTeamId: result.team.id!,
               });
             }
@@ -433,54 +450,11 @@ class SlackService {
     }
   }
 
-  // Debug method to check user tokens (temporary)
-  async debugUserTokens(slackUserId: string) {
-    try {
-      console.log(`\n=== DEBUG: Checking tokens for Slack user ${slackUserId} ===`);
-      
-      // 1. Look up user by Slack ID
-      const user = await storage.getUserBySlackId(slackUserId);
-      console.log(`User lookup result:`, user ? {
-        id: user.id,
-        slackUserId: user.slackUserId,
-        email: user.email,
-        name: user.name
-      } : 'null');
-      
-      if (user) {
-        // 2. Look up integrations for this user
-        const integration = await storage.getIntegrationByType(user.id, 'slack_user');
-        console.log(`Integration lookup result:`, integration ? {
-          id: integration.id,
-          userId: integration.userId,
-          type: integration.type,
-          hasAccessToken: !!integration.accessToken,
-          isActive: integration.isActive,
-          tokenPreview: integration.accessToken ? `${integration.accessToken.substring(0, 10)}...` : 'null'
-        } : 'null');
-        
-        // 3. Try to create client
-        const userClient = await this.getUserClient(user.id);
-        console.log(`User client creation:`, userClient ? 'SUCCESS' : 'FAILED');
-      }
-      
-      console.log(`=== END DEBUG ===\n`);
-      return { user, hasToken: !!user };
-    } catch (error) {
-      console.error("Debug error:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return { error: errorMessage };
-    }
-  }
-
   private async processFocusCommand(userId: string, teamId: string, duration: number) {
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
 
     let user = await storage.getUserBySlackId(userId);
-    
-    // DEBUG: Check user tokens
-    await this.debugUserTokens(userId);
     
     // If user doesn't exist, create them automatically
     if (!user) {
@@ -922,30 +896,18 @@ class SlackService {
 
   private async getUserClient(userId: string): Promise<WebClient | null> {
     try {
-      console.log(`Getting user client for userId: ${userId}`);
       const user = await storage.getUser(userId);
       if (!user) {
-        console.log(`No user found for userId: ${userId}`);
         return null;
       }
 
-      console.log(`User found: ${user.id}, slackUserId: ${user.slackUserId}`);
-
       // Get user's Slack integration (user token)
       const integration = await storage.getIntegrationByType(userId, 'slack_user');
-      console.log(`Integration query result:`, integration ? {
-        id: integration.id,
-        type: integration.type,
-        hasAccessToken: !!integration.accessToken,
-        isActive: integration.isActive
-      } : 'null');
 
       if (integration && integration.accessToken) {
-        console.log(`Found user token for ${userId}, creating WebClient`);
         return new WebClient(integration.accessToken);
       }
 
-      console.log(`No user token found for ${userId}`);
       return null;
     } catch (error) {
       console.error("Failed to get user client:", error);
@@ -955,33 +917,35 @@ class SlackService {
 
   async setFocusMode(userId: string, duration: number) {
     try {
-      console.log(`setFocusMode called with userId: ${userId}`);
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) {
-        console.log(`setFocusMode: No user found or no slackUserId for userId: ${userId}`);
         return;
       }
-
-      console.log(`setFocusMode: Found user ${user.id} with slackUserId: ${user.slackUserId}`);
 
       // Try to get user token first for status setting
       const userClient = await this.getUserClient(userId);
       
       if (userClient) {
-        console.log(`setFocusMode: User client found, setting status`);
         // We have user token - set status directly!
         const endTime = new Date(Date.now() + duration * 60 * 1000);
         
         try {
           await userClient.users.profile.set({
             profile: {
-              status_text: `In focus mode until ${endTime.toLocaleTimeString()}`,
+              status_text: "In focus mode",
               status_emoji: ":dart:",
               status_expiration: Math.floor(endTime.getTime() / 1000)
             }
           });
 
-          console.log(`setFocusMode: Successfully set Slack status for user ${user.slackUserId}`);
+          // Get user's timezone for proper time display
+          const userTimezone = user.timezone || 'America/New_York'; // Default to Eastern if not set
+          const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
+            timeZone: userTimezone,
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
 
           // Send success DM with bot client
           const botClient = await this.getClient(user.slackTeamId || undefined);
@@ -992,7 +956,7 @@ class SlackService {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n✅ Your Slack status has been automatically updated!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set clear goals for this session`
+                  text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set clear goals for this session`
                 }
               }
             ]
@@ -1005,7 +969,6 @@ class SlackService {
           await this.sendFocusNotification(user, duration);
         }
       } else {
-        console.log(`setFocusMode: No user client found, sending notification instead`);
         // No user token - send helpful notification
         await this.sendFocusNotification(user, duration);
       }
@@ -1072,6 +1035,15 @@ class SlackService {
   private async sendFocusNotification(user: any, duration: number) {
     const client = await this.getClient(user.slackTeamId || undefined);
     const endTime = new Date(Date.now() + duration * 60 * 1000);
+    
+    // Get user's timezone for proper time display
+    const userTimezone = user.timezone || 'America/New_York'; // Default to Eastern if not set
+    const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
+      timeZone: userTimezone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
 
     await client.chat.postMessage({
       channel: user.slackUserId,
@@ -1080,7 +1052,7 @@ class SlackService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n💡 *Pro tip:* For automatic status updates, reinstall the app from your workspace's App Directory to grant user permissions!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session`
+            text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n💡 *Pro tip:* For automatic status updates, reinstall the app from your workspace's App Directory to grant user permissions!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session`
           }
         },
         {
