@@ -103,21 +103,28 @@ class SlackService {
   // Handle interactive components (buttons, modals, etc.)
   async handleInteractivity(req: any, res: any) {
     try {
+      console.log("Received interactivity request");
       const payload = JSON.parse(req.body.payload);
       const { type, user, team, actions } = payload;
+
+      console.log(`Interactivity payload: type=${type}, user=${user?.id}, actions=${JSON.stringify(actions?.map((a: any) => ({action_id: a.action_id, value: a.value})))}`);
 
       let response;
       switch (type) {
         case "block_actions":
+          console.log("Processing block_actions");
           response = await this.handleBlockActions(payload);
           break;
         case "view_submission":
+          console.log("Processing view_submission");
           response = await this.handleViewSubmission(payload);
           break;
         default:
+          console.log(`Unknown interaction type: ${type}`);
           response = { response_action: "clear" };
       }
 
+      console.log(`Sending interactivity response:`, JSON.stringify(response, null, 2));
       res.json(response);
     } catch (error) {
       console.error("Interactivity error:", error);
@@ -725,14 +732,20 @@ class SlackService {
     const { actions, user, team } = payload;
     const action = actions[0];
 
+    console.log(`Block action received: action_id=${action.action_id}, value=${action.value}, user=${user.id}`);
+
     switch (action.action_id) {
       case "end_focus":
+        console.log("Handling end_focus action");
         return await this.endFocusSession(action.value, user.id);
       case "take_break":
+        console.log("Handling take_break action");
         return await this.acceptBreakSuggestion(action.value, user.id);
       case "defer_break":
+        console.log("Handling defer_break action");
         return await this.deferBreakSuggestion(action.value, user.id);
       default:
+        console.log(`Unknown action_id: ${action.action_id}`);
         return { response_action: "clear" };
     }
   }
@@ -809,8 +822,11 @@ class SlackService {
 
   private async deferBreakSuggestion(suggestionId: string, slackUserId: string) {
     try {
+      console.log(`Defer break suggestion called: suggestionId=${suggestionId}, slackUserId=${slackUserId}`);
+      
       const user = await storage.getUserBySlackId(slackUserId);
       if (user) {
+        console.log(`Found user ${user.id} for defer break`);
         // Log the deferral
         storage.logActivity({
           userId: user.id,
@@ -820,9 +836,11 @@ class SlackService {
             reason: "maybe_later"
           }
         }).catch(console.error);
+      } else {
+        console.log(`No user found for slackUserId: ${slackUserId}`);
       }
 
-      return {
+      const response = {
         replace_original: true,
         blocks: [
           {
@@ -843,6 +861,9 @@ class SlackService {
           }
         ]
       };
+
+      console.log(`Defer break response:`, JSON.stringify(response, null, 2));
+      return response;
     } catch (error) {
       console.error("Defer break error:", error);
       return {
