@@ -278,6 +278,11 @@ class SlackService {
 
   // Command handlers
   private async handleFocusCommand(text: string, userId: string, teamId: string) {
+    // Check if this is an "end" command
+    if (text.trim().toLowerCase() === 'end') {
+      return this.handleEndFocusCommand(userId, teamId);
+    }
+    
     const duration = parseInt(text) || 25; // Default 25 minutes
     
     try {
@@ -325,6 +330,84 @@ class SlackService {
         text: "❌ Failed to start focus session. Please try again in a moment."
       };
     }
+  }
+
+  private async handleEndFocusCommand(userId: string, teamId: string) {
+    try {
+      // Set a timeout for the entire operation
+      const result = await Promise.race([
+        this.processEndFocusCommand(userId, teamId),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Operation timeout')), 1000)
+        )
+      ]);
+      
+      return result;
+    } catch (error) {
+      console.error("End focus command error:", error);
+      
+      return {
+        response_type: "ephemeral",
+        text: "❌ Failed to end focus session. Please try again in a moment."
+      };
+    }
+  }
+
+  private async processEndFocusCommand(userId: string, teamId: string) {
+    // Ensure team info is stored
+    await this.ensureTeamStored(teamId);
+
+    let user = await storage.getUserBySlackId(userId);
+    
+    // If user doesn't exist, they can't have an active session
+    if (!user) {
+      return {
+        response_type: "ephemeral",
+        text: "❌ No active focus session found."
+      };
+    }
+
+    // Check for active focus session
+    const activeSession = await storage.getActiveFocusSession(user.id);
+    if (!activeSession) {
+      return {
+        response_type: "ephemeral",
+        text: "❌ No active focus session found."
+      };
+    }
+
+    // End the focus session
+    await storage.updateFocusSession(activeSession.id, {
+      status: 'completed',
+      endTime: new Date()
+    });
+
+    // Clear Slack status asynchronously (don't wait for it)
+    this.clearFocusMode(user.id).catch(console.error);
+
+    // Log activity without waiting
+    storage.logActivity({
+      userId: user.id,
+      action: "focus_session_ended",
+      details: { 
+        sessionId: activeSession.id, 
+        duration: activeSession.duration,
+        trigger: "manual_end_command"
+      }
+    }).catch(console.error);
+
+    return {
+      response_type: "ephemeral",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `✅ *Focus session ended!*\n\nGreat work! You've completed your focus session.\n\n🔄 Your Slack status is being cleared automatically.\n\nTime to take a well-deserved break! 🎉`
+          }
+        }
+      ]
+    };
   }
 
   private async ensureTeamStored(teamId: string) {
