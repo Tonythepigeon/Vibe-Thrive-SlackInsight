@@ -496,6 +496,9 @@ class SlackService {
       startTime: new Date()
     });
 
+    // Update daily productivity metrics (async, don't block response)
+    this.updateDailyMetrics(user.id, new Date()).catch(console.error);
+
     // Set Slack status asynchronously (don't wait for it)
     this.setFocusMode(user.id, duration).catch(console.error);
 
@@ -706,8 +709,26 @@ class SlackService {
     const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
     
     // Get weekly stats
-    const metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
+    let metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
     const weeklyMeetings = await storage.getUserMeetings(user.id, weekAgo, today);
+    
+    // If no metrics exist but we have meetings, calculate them
+    if (metrics.length === 0 && weeklyMeetings.length > 0) {
+      const { analyticsService } = await import('./analytics');
+      
+      // Calculate metrics for the past 7 days
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+        try {
+          await analyticsService.processProductivityMetrics(user.id, date);
+        } catch (error) {
+          console.error(`Failed to process productivity metrics for ${date.toDateString()}:`, error);
+        }
+      }
+      
+      // Refresh metrics after calculation
+      metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
+    }
     
     // Get today's meetings specifically
     const todaysMeetings = await this.getTodaysMeetings(user.id);
@@ -957,6 +978,9 @@ class SlackService {
           type: "coffee_break"
         }
       }).catch(console.error);
+
+      // Update daily productivity metrics (async)
+      this.updateDailyMetrics(user.id, new Date()).catch(console.error);
 
       return {
         replace_original: true,
@@ -1462,7 +1486,7 @@ class SlackService {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n💡 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
+                  text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
                 }
               }
             ]
@@ -1611,6 +1635,16 @@ class SlackService {
         replace_original: true,
         text: "❌ Failed to generate demo data. Please try again."
       };
+    }
+  }
+
+  // Update daily productivity metrics
+  private async updateDailyMetrics(userId: string, date: Date) {
+    try {
+      const { analyticsService } = await import('./analytics');
+      await analyticsService.processProductivityMetrics(userId, date);
+    } catch (error) {
+      console.error("Failed to update daily metrics:", error);
     }
   }
 }

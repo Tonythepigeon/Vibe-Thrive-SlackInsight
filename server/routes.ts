@@ -110,6 +110,114 @@ async function generateTestMeetingData(userId: string) {
   }
 
   console.log(`Generated test meeting data for user ${userId}`);
+  
+  // Generate some demo focus sessions and break suggestions to make metrics realistic
+  await generateDemoFocusData(userId, startDate);
+  
+  // After generating meetings, calculate productivity metrics for each day
+  const { analyticsService } = await import('./services/analytics');
+  
+  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(startDate.getDate() + dayOffset);
+    
+    try {
+      await analyticsService.processProductivityMetrics(userId, currentDate);
+    } catch (error) {
+      console.error(`Failed to process productivity metrics for ${currentDate.toDateString()}:`, error);
+    }
+  }
+  
+  console.log(`Generated productivity metrics for user ${userId}`);
+}
+
+// Generate demo focus sessions and break suggestions
+async function generateDemoFocusData(userId: string, startDate: Date) {
+  const focusSessionTypes = [25, 30, 45, 60, 90]; // Pomodoro and other common durations
+  const breakTypes = ['hydration', 'stretch', 'meditation', 'walk'];
+  
+  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(startDate.getDate() + dayOffset);
+    
+    // Skip weekends for most focus sessions
+    const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+    
+    // Generate 1-4 focus sessions per weekday, 0-2 on weekends
+    const focusSessionCount = isWeekend 
+      ? Math.floor(Math.random() * 3) // 0-2 sessions
+      : Math.floor(Math.random() * 4) + 1; // 1-4 sessions
+    
+    for (let i = 0; i < focusSessionCount; i++) {
+      const duration = focusSessionTypes[Math.floor(Math.random() * focusSessionTypes.length)];
+      const startHour = isWeekend 
+        ? Math.floor(Math.random() * 8) + 10 // 10 AM - 6 PM
+        : Math.floor(Math.random() * 8) + 9;  // 9 AM - 5 PM
+      const startMinute = Math.floor(Math.random() * 4) * 15;
+      
+      const startTime = new Date(currentDate);
+      startTime.setHours(startHour, startMinute, 0, 0);
+      
+      const endTime = new Date(startTime);
+      endTime.setMinutes(startTime.getMinutes() + duration);
+      
+      // Create focus session
+      try {
+        await storage.createFocusSession({
+          userId,
+          duration,
+          startTime,
+          endTime,
+          status: 'completed',
+          slackStatusSet: Math.random() > 0.3 // 70% had Slack status set
+        });
+      } catch (error) {
+        // Skip if creation fails
+        continue;
+      }
+    }
+    
+    // Generate some break suggestions (2-5 per weekday, 1-2 on weekends)
+    const breakCount = isWeekend
+      ? Math.floor(Math.random() * 2) + 1 // 1-2 breaks
+      : Math.floor(Math.random() * 4) + 2; // 2-5 breaks
+    
+    for (let i = 0; i < breakCount; i++) {
+      const breakType = breakTypes[Math.floor(Math.random() * breakTypes.length)];
+      const accepted = Math.random() > 0.4; // 60% acceptance rate
+      
+      const suggestedTime = new Date(currentDate);
+      suggestedTime.setHours(
+        Math.floor(Math.random() * 8) + 9, // 9 AM - 5 PM
+        Math.floor(Math.random() * 4) * 15,
+        0, 0
+      );
+      
+      const breakMessage = {
+        hydration: "💧 Time for a water break! Stay hydrated.",
+        stretch: "🤸 Take a moment to stretch and move around.",
+        meditation: "🧘 Try a quick 5-minute meditation break.",
+        walk: "🚶 How about a quick walk outside?"
+      }[breakType] || "Take a quick wellness break!";
+      
+      try {
+        await storage.createBreakSuggestion({
+          userId,
+          type: breakType,
+          message: breakMessage,
+          reason: "Scheduled wellness break",
+          accepted,
+          suggestedAt: suggestedTime,
+          acceptedAt: accepted ? new Date(suggestedTime.getTime() + Math.random() * 30 * 60 * 1000) : undefined
+        });
+      } catch (error) {
+        // Skip if creation fails
+        continue;
+      }
+    }
+  }
+  
+  console.log(`Generated demo focus sessions and break suggestions for user ${userId}`);
 }
 
 export { generateTestMeetingData };
