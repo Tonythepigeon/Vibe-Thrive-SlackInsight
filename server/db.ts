@@ -206,6 +206,16 @@ async function initializeDatabaseTables() {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integrations' AND column_name='is_active') THEN
             ALTER TABLE integrations ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
           END IF;
+          
+          -- Fix meetings table
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='attendees') THEN
+            ALTER TABLE meetings ADD COLUMN attendees JSONB;
+          END IF;
+          
+          -- Fix productivity_metrics table  
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='productivity_metrics' AND column_name='back_to_back_meetings') THEN
+            ALTER TABLE productivity_metrics ADD COLUMN back_to_back_meetings INTEGER DEFAULT 0;
+          END IF;
         END $$;
       `);
       console.log("Applied schema fixes for existing tables");
