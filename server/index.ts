@@ -37,16 +37,41 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  // Initialize database tables
-  try {
-    await initializeDatabase();
-  } catch (error) {
-    console.error("Failed to initialize database. Exiting...");
-    process.exit(1);
+// Resilient database initialization with retries
+async function initializeDatabaseWithRetries(maxRetries = 3, delay = 5000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      log(`Attempting database initialization (attempt ${attempt}/${maxRetries})...`);
+      await initializeDatabase();
+      log("Database initialized successfully!");
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Database initialization attempt ${attempt} failed: ${errorMessage}`);
+      
+      if (attempt === maxRetries) {
+        log("All database initialization attempts failed. App will continue without DB setup.");
+        log("Database tables may need to be created manually or DB connection needs to be fixed.");
+        return false;
+      }
+      
+      log(`Retrying in ${delay/1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  return false;
+}
 
+(async () => {
   const server = await registerRoutes(app);
+
+  // Try to initialize database but don't fail if it doesn't work
+  // This allows the app to start even if DB is temporarily unavailable
+  setTimeout(() => {
+    initializeDatabaseWithRetries().catch(error => {
+      log("Database initialization failed completely, but app will continue running");
+    });
+  }, 1000); // Delay initialization slightly to let the app start first
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

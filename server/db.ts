@@ -6,22 +6,42 @@ import * as schema from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+// Make database connection lazy - only connect when actually needed
+let pool: Pool;
+let db: ReturnType<typeof drizzle>;
+
+function getDbConnection() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL must be set. Did you forget to provision a database?",
+    );
+  }
+  
+  if (!pool) {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    db = drizzle({ client: pool, schema });
+  }
+  
+  return db;
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle({ client: pool, schema });
+// Export lazy-initialized database connection
+export { getDbConnection as db };
 
 // Initialize database tables if they don't exist
 export async function initializeDatabase() {
   try {
     console.log("Initializing database tables...");
     
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is not set");
+    }
+    
+    // Get fresh connection for initialization
+    const tempPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    
     // Create tables using raw SQL since we don't have migration files
-    await pool.query(`
+    await tempPool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         slack_user_id TEXT,
@@ -124,6 +144,8 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_focus_sessions_user ON focus_sessions(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id, timestamp);
     `);
+    
+    await tempPool.end(); // Close the temporary connection
     
     console.log("Database tables initialized successfully!");
   } catch (error) {

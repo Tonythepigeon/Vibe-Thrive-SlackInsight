@@ -55,28 +55,32 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  private getDb() {
+    return db();
+  }
+
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
+    const [user] = await this.getDb().select().from(users).where(eq(users.id, id));
     return user || undefined;
   }
 
   async getUserBySlackId(slackUserId: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.slackUserId, slackUserId));
+    const [user] = await this.getDb().select().from(users).where(eq(users.slackUserId, slackUserId));
     return user || undefined;
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
+    const [user] = await this.getDb().select().from(users).where(eq(users.email, email));
     return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const [user] = await this.getDb().insert(users).values(insertUser).returning();
     return user;
   }
 
   async updateUser(id: string, updates: Partial<InsertUser>): Promise<User> {
-    const [user] = await db
+    const [user] = await this.getDb()
       .update(users)
       .set({ ...updates, updatedAt: sql`now()` })
       .where(eq(users.id, id))
@@ -85,11 +89,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserIntegrations(userId: string): Promise<Integration[]> {
-    return await db.select().from(integrations).where(eq(integrations.userId, userId));
+    return await this.getDb().select().from(integrations).where(eq(integrations.userId, userId));
   }
 
   async getIntegrationByType(userId: string, type: string): Promise<Integration | undefined> {
-    const [integration] = await db
+    const [integration] = await this.getDb()
       .select()
       .from(integrations)
       .where(and(eq(integrations.userId, userId), eq(integrations.type, type)));
@@ -97,12 +101,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createIntegration(integration: InsertIntegration): Promise<Integration> {
-    const [newIntegration] = await db.insert(integrations).values(integration).returning();
+    const [newIntegration] = await this.getDb().insert(integrations).values(integration).returning();
     return newIntegration;
   }
 
   async updateIntegration(id: string, updates: Partial<InsertIntegration>): Promise<Integration> {
-    const [integration] = await db
+    const [integration] = await this.getDb()
       .update(integrations)
       .set({ ...updates, updatedAt: sql`now()` })
       .where(eq(integrations.id, id))
@@ -111,7 +115,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteIntegration(id: string): Promise<void> {
-    await db.delete(integrations).where(eq(integrations.id, id));
+    await this.getDb().delete(integrations).where(eq(integrations.id, id));
   }
 
   async getUserMeetings(userId: string, startDate?: Date, endDate?: Date): Promise<Meeting[]> {
@@ -122,7 +126,7 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lte(meetings.startTime, endDate));
     }
     
-    return await db
+    return await this.getDb()
       .select()
       .from(meetings)
       .where(and(...conditions))
@@ -130,7 +134,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createMeeting(meeting: InsertMeeting): Promise<Meeting> {
-    const [newMeeting] = await db.insert(meetings).values(meeting).returning();
+    const [newMeeting] = await this.getDb().insert(meetings).values(meeting).returning();
     return newMeeting;
   }
 
@@ -140,7 +144,7 @@ export class DatabaseStorage implements IStorage {
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    return await db
+    return await this.getDb()
       .select()
       .from(meetings)
       .where(
@@ -154,7 +158,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getProductivityMetrics(userId: string, startDate: Date, endDate: Date): Promise<ProductivityMetrics[]> {
-    return await db
+    return await this.getDb()
       .select()
       .from(productivityMetrics)
       .where(
@@ -168,7 +172,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createOrUpdateProductivityMetrics(metrics: InsertProductivityMetrics): Promise<ProductivityMetrics> {
-    const existing = await db
+    const existing = await this.getDb()
       .select()
       .from(productivityMetrics)
       .where(
@@ -179,20 +183,20 @@ export class DatabaseStorage implements IStorage {
       );
 
     if (existing.length > 0) {
-      const [updated] = await db
+      const [updated] = await this.getDb()
         .update(productivityMetrics)
         .set(metrics)
         .where(eq(productivityMetrics.id, existing[0].id))
         .returning();
       return updated;
     } else {
-      const [created] = await db.insert(productivityMetrics).values(metrics).returning();
+      const [created] = await this.getDb().insert(productivityMetrics).values(metrics).returning();
       return created;
     }
   }
 
   async getAggregatedMetrics(startDate: Date, endDate: Date): Promise<any> {
-    const result = await db
+    const result = await this.getDb()
       .select({
         totalUsers: sql<number>`count(distinct ${productivityMetrics.userId})`,
         totalMeetingTime: sql<number>`sum(${productivityMetrics.totalMeetingTime})`,
@@ -212,13 +216,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createBreakSuggestion(suggestion: InsertBreakSuggestion): Promise<BreakSuggestion> {
-    const [newSuggestion] = await db.insert(breakSuggestions).values(suggestion).returning();
+    const [newSuggestion] = await this.getDb().insert(breakSuggestions).values(suggestion).returning();
     return newSuggestion;
   }
 
   async getRecentBreakSuggestions(userId: string, hours: number): Promise<BreakSuggestion[]> {
     const hoursAgo = new Date(Date.now() - hours * 60 * 60 * 1000);
-    return await db
+    return await this.getDb()
       .select()
       .from(breakSuggestions)
       .where(
@@ -231,7 +235,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateBreakSuggestion(id: string, updates: Partial<InsertBreakSuggestion>): Promise<BreakSuggestion> {
-    const [updated] = await db
+    const [updated] = await this.getDb()
       .update(breakSuggestions)
       .set(updates)
       .where(eq(breakSuggestions.id, id))
@@ -240,12 +244,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createFocusSession(session: InsertFocusSession): Promise<FocusSession> {
-    const [newSession] = await db.insert(focusSessions).values(session).returning();
+    const [newSession] = await this.getDb().insert(focusSessions).values(session).returning();
     return newSession;
   }
 
   async getActiveFocusSession(userId: string): Promise<FocusSession | undefined> {
-    const [session] = await db
+    const [session] = await this.getDb()
       .select()
       .from(focusSessions)
       .where(
@@ -258,7 +262,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateFocusSession(id: string, updates: Partial<InsertFocusSession>): Promise<FocusSession> {
-    const [updated] = await db
+    const [updated] = await this.getDb()
       .update(focusSessions)
       .set(updates)
       .where(eq(focusSessions.id, id))
@@ -267,12 +271,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async logActivity(log: InsertActivityLog): Promise<ActivityLog> {
-    const [newLog] = await db.insert(activityLogs).values(log).returning();
+    const [newLog] = await this.getDb().insert(activityLogs).values(log).returning();
     return newLog;
   }
 
   async getRecentActivity(limit: number): Promise<ActivityLog[]> {
-    return await db
+    return await this.getDb()
       .select()
       .from(activityLogs)
       .orderBy(desc(activityLogs.timestamp))
@@ -280,7 +284,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSlackTeam(slackTeamId: string): Promise<SlackTeam | undefined> {
-    const [team] = await db
+    const [team] = await this.getDb()
       .select()
       .from(slackTeams)
       .where(eq(slackTeams.slackTeamId, slackTeamId));
@@ -288,12 +292,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSlackTeam(team: InsertSlackTeam): Promise<SlackTeam> {
-    const [newTeam] = await db.insert(slackTeams).values(team).returning();
+    const [newTeam] = await this.getDb().insert(slackTeams).values(team).returning();
     return newTeam;
   }
 
   async updateSlackTeam(slackTeamId: string, updates: Partial<InsertSlackTeam>): Promise<SlackTeam> {
-    const [updated] = await db
+    const [updated] = await this.getDb()
       .update(slackTeams)
       .set(updates)
       .where(eq(slackTeams.slackTeamId, slackTeamId))
