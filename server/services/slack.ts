@@ -128,11 +128,20 @@ class SlackService {
   async handleOAuth(req: any, res: any) {
     try {
       const { code, state } = req.query;
+      console.log("OAuth request received with code:", code ? "present" : "missing");
 
       if (!code) {
+        console.error("OAuth failed: No authorization code provided");
         return res.status(400).json({ error: "Authorization code required" });
       }
 
+      // Check environment variables
+      if (!process.env.SLACK_CLIENT_ID || !process.env.SLACK_CLIENT_SECRET) {
+        console.error("OAuth failed: Missing SLACK_CLIENT_ID or SLACK_CLIENT_SECRET");
+        return res.status(500).json({ error: "OAuth configuration missing" });
+      }
+
+      console.log("Calling Slack OAuth API...");
       const client = new WebClient();
       const result = await client.oauth.v2.access({
         client_id: process.env.SLACK_CLIENT_ID!,
@@ -140,30 +149,49 @@ class SlackService {
         code,
       });
 
+      console.log("Slack OAuth API response:", {
+        ok: result.ok,
+        hasTeam: !!result.team,
+        hasAccessToken: !!result.access_token,
+        hasAuthedUser: !!result.authed_user,
+        hasUserToken: !!(result.authed_user?.access_token)
+      });
+
       if (result.ok && result.team && result.access_token) {
-        // Store team information with bot token
-        await storage.createSlackTeam({
-          slackTeamId: result.team.id!,
-          teamName: result.team.name!,
-          botToken: result.access_token,
-          botUserId: result.bot_user_id!,
-        });
-
-        // Store bot token for this team
+        // Store bot token for this team first (most important)
         this.clients.set(result.team.id!, new WebClient(result.access_token));
+        console.log(`Stored bot client for team ${result.team.id}`);
 
-        // If authed_user is present, create/update user record with user token
+        // Try to store team information in database (non-critical)
+        try {
+          await storage.createSlackTeam({
+            slackTeamId: result.team.id!,
+            teamName: result.team.name!,
+            botToken: result.access_token,
+            botUserId: result.bot_user_id!,
+          });
+          console.log(`Stored team ${result.team.id} in database`);
+        } catch (dbError) {
+          console.error("Failed to store team in database (non-critical):", dbError);
+          // Continue with OAuth flow even if database fails
+        }
+
+        // If authed_user is present, try to store user token (important for status updates)
         if (result.authed_user && result.authed_user.access_token) {
           try {
+            console.log(`Processing user token for ${result.authed_user.id}`);
+            
             // Check if user already exists
             let user = await storage.getUserBySlackId(result.authed_user.id!);
             
             if (user) {
+              console.log(`User ${result.authed_user.id} already exists`);
               // Update existing user with user token
               await storage.updateUser(user.id, {
                 name: result.authed_user.id!, // Will be updated when we get more info
               });
             } else {
+              console.log(`Creating new user ${result.authed_user.id}`);
               // Create new user
               user = await storage.createUser({
                 slackUserId: result.authed_user.id!,
@@ -184,25 +212,46 @@ class SlackService {
               isActive: true,
             });
 
-            console.log(`Stored user token for ${result.authed_user.id}`);
-          } catch (error) {
-            // User might already exist
-            console.log("User setup during OAuth:", error);
+            console.log(`Successfully stored user token for ${result.authed_user.id}`);
+          } catch (userError) {
+            console.error("Failed to store user token (non-critical):", userError);
+            // Continue with OAuth flow even if user storage fails
           }
+        } else {
+          console.log("No user token received - user permissions may not have been granted");
         }
 
-        await storage.logActivity({
-          action: "slack_app_installed",
-          details: { teamId: result.team.id, teamName: result.team.name }
-        });
+        // Try to log activity (non-critical)
+        try {
+          await storage.logActivity({
+            action: "slack_app_installed",
+            details: { teamId: result.team.id, teamName: result.team.name }
+          });
+        } catch (logError) {
+          console.error("Failed to log activity (non-critical):", logError);
+        }
 
+        console.log("OAuth successful! Redirecting to success page");
         res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/integration-success`);
       } else {
-        res.status(400).json({ error: "OAuth failed" });
+        console.error("OAuth failed: Invalid response from Slack", {
+          ok: result.ok,
+          error: result.error,
+          hasTeam: !!result.team,
+          hasAccessToken: !!result.access_token
+        });
+        res.status(400).json({ 
+          error: "OAuth failed", 
+          details: result.error || "Invalid response from Slack"
+        });
       }
     } catch (error) {
       console.error("Slack OAuth error:", error);
-      res.status(500).json({ error: "OAuth failed" });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ 
+        error: "OAuth failed", 
+        details: errorMessage 
+      });
     }
   }
 
