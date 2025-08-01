@@ -836,30 +836,19 @@ class SlackService {
             reason: "maybe_later"
           }
         }).catch(console.error);
+
+        // Also send a DM as backup (don't wait for it)
+        this.sendDeferBreakDM(user).catch(console.error);
       } else {
         console.log(`No user found for slackUserId: ${slackUserId}`);
       }
 
+      // Try a simpler response format with timestamp to prevent caching
+      const timestamp = new Date().toLocaleTimeString();
       const response = {
         replace_original: true,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "👍 *No problem!*\n\nI understand you're in the zone right now. Remember that regular breaks help maintain focus and prevent burnout.\n\n💡 *Break Benefits:*\n• Improves creativity and problem-solving\n• Reduces eye strain and physical tension\n• Boosts energy and mood\n• Enhances overall productivity\n\n⏰ Consider taking a break within the next 30-60 minutes. Your brain (and body) will thank you!"
-            }
-          },
-          {
-            type: "context",
-            elements: [
-              {
-                type: "mrkdwn",
-                text: "💫 _Tip: Use `/break` anytime you're ready for a wellness break!_"
-              }
-            ]
-          }
-        ]
+        response_type: "ephemeral",
+        text: `👍 *No problem!* (${timestamp})\n\nI understand you're in the zone right now. Remember that regular breaks help maintain focus and prevent burnout.\n\n💡 *Break Benefits:*\n• Improves creativity and problem-solving\n• Reduces eye strain and physical tension\n• Boosts energy and mood\n• Enhances overall productivity\n\n⏰ Consider taking a break within the next 30-60 minutes. Your brain (and body) will thank you!\n\n💫 _Tip: Use \`/break\` anytime you're ready for a wellness break!_`
       };
 
       console.log(`Defer break response:`, JSON.stringify(response, null, 2));
@@ -870,6 +859,20 @@ class SlackService {
         replace_original: true,
         text: "👍 No problem! Remember to take breaks when you can - they're important for your wellbeing!"
       };
+    }
+  }
+
+  // Backup method to send DM if replace_original doesn't work
+  private async sendDeferBreakDM(user: any) {
+    try {
+      const client = await this.getClient(user.slackTeamId || undefined);
+      await client.chat.postMessage({
+        channel: user.slackUserId,
+        text: "👍 *Break reminder deferred*\n\nNo worries! I understand you're focused right now. Just remember that regular breaks help maintain your energy and creativity throughout the day.\n\nConsider taking a short break within the next hour - even 5 minutes can make a difference! ☕"
+      });
+      console.log(`Sent defer break DM to ${user.slackUserId}`);
+    } catch (error) {
+      console.error("Failed to send defer break DM:", error);
     }
   }
 
