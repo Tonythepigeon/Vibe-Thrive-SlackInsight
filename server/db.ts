@@ -185,6 +185,25 @@ async function initializeDatabaseTables() {
       CREATE INDEX IF NOT EXISTS idx_focus_sessions_user ON focus_sessions(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id, timestamp);
     `);
+    
+    // Fix existing tables that might be missing new columns
+    try {
+      await tempPool.query(`
+        DO $$ 
+        BEGIN 
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='slack_teams' AND column_name='installed_at') THEN
+            ALTER TABLE slack_teams ADD COLUMN installed_at TIMESTAMP DEFAULT NOW();
+          END IF;
+          
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='slack_teams' AND column_name='is_active') THEN
+            ALTER TABLE slack_teams ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+          END IF;
+        END $$;
+      `);
+      console.log("Applied schema fixes for existing tables");
+    } catch (schemaError) {
+      console.error("Schema fix error (non-critical):", schemaError);
+    }
   } catch (error) {
     console.error("Error during table creation:", error);
     throw error;
