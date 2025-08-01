@@ -17,6 +17,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Integration success page
+  app.get("/integration-success", (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Integration Successful - ProductivityWise</title>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 40px 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          .container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+          }
+          .success-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+          }
+          h1 {
+            color: #2d3748;
+            margin-bottom: 16px;
+            font-size: 28px;
+          }
+          p {
+            color: #4a5568;
+            line-height: 1.6;
+            margin-bottom: 16px;
+          }
+          .features {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 24px 0;
+            text-align: left;
+          }
+          .feature {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+          }
+          .feature:last-child {
+            margin-bottom: 0;
+          }
+          .feature-icon {
+            margin-right: 12px;
+            font-size: 18px;
+          }
+          .cta {
+            background: #4299e1;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 20px;
+          }
+          .cta:hover {
+            background: #3182ce;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="success-icon">🎉</div>
+          <h1>Integration Successful!</h1>
+          <p>Great! ProductivityWise has been successfully connected to your Slack workspace with full permissions.</p>
+          
+          <div class="features">
+            <div class="feature">
+              <span class="feature-icon">🎯</span>
+              <span><strong>Automatic Status Updates:</strong> Your Slack status will update during focus sessions</span>
+            </div>
+            <div class="feature">
+              <span class="feature-icon">⏰</span>
+              <span><strong>Smart Break Suggestions:</strong> Get personalized break recommendations</span>
+            </div>
+            <div class="feature">
+              <span class="feature-icon">📊</span>
+              <span><strong>Productivity Insights:</strong> Track your meeting time and focus patterns</span>
+            </div>
+          </div>
+          
+          <p>You can now return to Slack and try the following commands:</p>
+          <p><strong>/focus 25</strong> - Start a focus session with automatic status updates<br>
+          <strong>/break</strong> - Get a personalized break suggestion<br>
+          <strong>/productivity</strong> - View your productivity metrics</p>
+          
+          <a href="slack://open" class="cta">Return to Slack</a>
+        </div>
+      </body>
+      </html>
+    `);
+  });
+
   // Database health check
   app.get("/api/health/db", async (req, res) => {
     try {
