@@ -464,6 +464,52 @@ export class DatabaseStorage implements IStorage {
       throw error;
     }
   }
+
+  // Get focus sessions for a user within a date range
+  async getFocusSessionsByDateRange(userId: string, startDate: Date, endDate: Date): Promise<FocusSession[]> {
+    try {
+      return await this.getDb()
+        .select()
+        .from(focusSessions)
+        .where(
+          and(
+            eq(focusSessions.userId, userId),
+            gte(focusSessions.startTime, startDate),
+            lte(focusSessions.startTime, endDate)
+          )
+        )
+        .orderBy(focusSessions.startTime);
+    } catch (error) {
+      console.error("Failed to get focus sessions:", error);
+      return [];
+    }
+  }
+
+  // Get focus sessions for a specific date
+  async getFocusSessionsByDate(userId: string, date: Date): Promise<FocusSession[]> {
+    try {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      
+      return await this.getFocusSessionsByDateRange(userId, startOfDay, endOfDay);
+    } catch (error) {
+      console.error("Failed to get focus sessions by date:", error);
+      return [];
+    }
+  }
+
+  // Clear productivity metrics for a user (for demo purposes)
+  async clearUserProductivityMetrics(userId: string): Promise<void> {
+    try {
+      await this.getDb().delete(productivityMetrics).where(eq(productivityMetrics.userId, userId));
+    } catch (error) {
+      console.error("Failed to clear productivity metrics:", error);
+      throw error;
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();

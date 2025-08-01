@@ -131,6 +131,7 @@ class AnalyticsService {
   async processProductivityMetrics(userId: string, date: Date) {
     const meetings = await storage.getMeetingsByDate(userId, date);
     const breakSuggestions = await storage.getRecentBreakSuggestions(userId, 24);
+    const focusSessionsForDate = await storage.getFocusSessionsByDate(userId, date);
     
     let totalMeetingTime = 0;
     let backToBackMeetings = 0;
@@ -151,22 +152,27 @@ class AnalyticsService {
       }
     });
 
-    // Calculate focus time (8 hours - meeting time - break time)
-    const workDayMinutes = 8 * 60;
-    const focusTime = Math.max(0, workDayMinutes - totalMeetingTime - (breakSuggestions.length * 15));
+    // Calculate focus time from actual completed focus sessions
+    const focusTime = focusSessionsForDate
+      .filter(session => session.status === 'completed')
+      .reduce((total, session) => total + (session.duration || 0), 0);
+
+    // Filter break suggestions for this specific date
+    const dateString = date.toDateString();
+    const dailyBreakSuggestions = breakSuggestions.filter(b => 
+      b.suggestedAt && new Date(b.suggestedAt).toDateString() === dateString
+    );
 
     const metrics = {
       userId,
       date,
       totalMeetingTime,
       meetingCount: meetings.length,
-      focusTime,
-      breaksSuggested: breakSuggestions.filter(b => 
-        b.suggestedAt && new Date(b.suggestedAt).toDateString() === date.toDateString()
-      ).length,
-      breaksAccepted: breakSuggestions.filter(b => 
-        b.accepted && b.suggestedAt && new Date(b.suggestedAt).toDateString() === date.toDateString()
-      ).length,
+      focusTime, // Now based on actual focus sessions
+      breaksSuggested: dailyBreakSuggestions.length,
+      breaksAccepted: dailyBreakSuggestions.filter(b => b.accepted).length,
+      focusSessionsStarted: focusSessionsForDate.length,
+      focusSessionsCompleted: focusSessionsForDate.filter(s => s.status === 'completed').length,
       backToBackMeetings
     };
 

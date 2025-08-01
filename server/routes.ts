@@ -11,17 +11,17 @@ import { insertUserSchema, insertIntegrationSchema, insertFocusSessionSchema, ty
 async function generateTestMeetingData(userId: string) {
   const meetingTypes = [
     { title: "Weekly Team Standup", duration: 30, type: "video_call" as const },
-    { title: "Project Review Meeting", duration: 60, type: "video_call" as const },
+    { title: "Quick Check-in", duration: 30, type: "video_call" as const },
     { title: "1:1 with Manager", duration: 30, type: "video_call" as const },
-    { title: "Client Presentation", duration: 45, type: "video_call" as const },
-    { title: "Product Planning Session", duration: 90, type: "video_call" as const },
-    { title: "Design Review", duration: 60, type: "video_call" as const },
-    { title: "Sprint Planning", duration: 120, type: "video_call" as const },
-    { title: "All Hands Meeting", duration: 45, type: "video_call" as const },
+    { title: "Client Call", duration: 30, type: "video_call" as const },
+    { title: "Team Sync", duration: 30, type: "video_call" as const },
+    { title: "Status Update", duration: 30, type: "video_call" as const },
     { title: "Coffee Chat", duration: 30, type: "in_person" as const },
-    { title: "Technical Deep Dive", duration: 90, type: "video_call" as const },
-    { title: "Customer Feedback Session", duration: 60, type: "video_call" as const },
-    { title: "Strategy Planning", duration: 75, type: "video_call" as const }
+    { title: "Project Review Meeting", duration: 60, type: "video_call" as const },
+    { title: "Client Presentation", duration: 45, type: "video_call" as const },
+    { title: "Design Review", duration: 60, type: "video_call" as const },
+    { title: "Sprint Planning", duration: 90, type: "video_call" as const },
+    { title: "All Hands Meeting", duration: 45, type: "video_call" as const }
   ];
 
   const attendeeOptions = [
@@ -41,18 +41,21 @@ async function generateTestMeetingData(userId: string) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + dayOffset);
     
-    // Skip weekends completely - no meetings on Saturday or Sunday
-    const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
-    if (isWeekend) {
+    // Skip weekends completely - no meetings on Saturday (6) or Sunday (0)
+    const dayOfWeek = currentDate.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      console.log(`Skipping ${currentDate.toDateString()} - weekend`);
       continue; // Skip this day entirely
     }
     
-    // Generate 2-6 meetings per weekday only
-    const meetingCount = Math.floor(Math.random() * 5) + 2; // 2-6 meetings
+    // Generate 2-5 meetings per weekday only (reduced from 2-6)
+    const meetingCount = Math.floor(Math.random() * 4) + 2; // 2-5 meetings max
     
     const dailyMeetings: InsertMeeting[] = [];
     let totalDailyTime = 0;
-    const maxDailyTime = 480; // 8 hours max weekday
+    const maxDailyTime = 300; // Reduced to 5 hours max per day (was 8 hours)
+    
+    console.log(`Generating ${meetingCount} meetings for ${currentDate.toDateString()}`);
     
     for (let i = 0; i < meetingCount && totalDailyTime < maxDailyTime; i++) {
       const meetingTemplate = meetingTypes[Math.floor(Math.random() * meetingTypes.length)];
@@ -60,11 +63,12 @@ async function generateTestMeetingData(userId: string) {
       
       // Don't exceed daily time limit
       if (totalDailyTime + meetingTemplate.duration > maxDailyTime) {
+        console.log(`Skipping meeting - would exceed daily limit (${totalDailyTime + meetingTemplate.duration} > ${maxDailyTime})`);
         continue;
       }
       
       // Generate meeting time strictly within 8 AM to 5 PM (work hours only)
-      const startHour = Math.floor(Math.random() * 9) + 8; // 8 AM - 4 PM (to allow for meeting duration)
+      const startHour = Math.floor(Math.random() * 8) + 8; // 8 AM - 3 PM (to allow for meeting duration)
       const startMinute = Math.floor(Math.random() * 4) * 15; // 0, 15, 30, 45 minutes
       
       const startTime = new Date(currentDate);
@@ -75,6 +79,7 @@ async function generateTestMeetingData(userId: string) {
       
       // Ensure meeting doesn't go past 5 PM (17:00)
       if (endTime.getHours() >= 17) {
+        console.log(`Skipping meeting - would end after 5 PM (${endTime.getHours()}:${endTime.getMinutes()})`);
         continue; // Skip this meeting if it would go past 5 PM
       }
       
@@ -86,7 +91,7 @@ async function generateTestMeetingData(userId: string) {
       if (!hasConflict) {
         dailyMeetings.push({
           userId,
-          externalId: `test-${userId}-${dayOffset}-${i}-${Date.now()}`,
+          externalId: `test-${userId}-${dayOffset}-${i}-${Date.now()}-${Math.random()}`,
           title: meetingTemplate.title,
           startTime,
           endTime,
@@ -97,6 +102,9 @@ async function generateTestMeetingData(userId: string) {
         });
         
         totalDailyTime += meetingTemplate.duration;
+        console.log(`Added meeting: ${meetingTemplate.title} (${meetingTemplate.duration}min) at ${startTime.toLocaleTimeString()}`);
+      } else {
+        console.log(`Skipping meeting due to conflict: ${meetingTemplate.title}`);
       }
     }
     
@@ -233,6 +241,15 @@ async function clearFocusAndBreakData(userId: string) {
     // Clear focus sessions and break suggestions using storage methods
     await storage.clearUserFocusSessions(userId);
     await storage.clearUserBreakSuggestions(userId);
+    
+    // Also clear old productivity metrics so they get recalculated fresh
+    try {
+      await storage.clearUserProductivityMetrics(userId);
+      console.log(`Cleared old productivity metrics for user ${userId}`);
+    } catch (metricsError) {
+      console.error("Failed to clear productivity metrics:", metricsError);
+      // Continue anyway - we'll recalculate them
+    }
     
     // Recalculate productivity metrics without focus/break data
     const { analyticsService } = await import('./services/analytics');
