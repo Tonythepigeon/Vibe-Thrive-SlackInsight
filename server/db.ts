@@ -18,7 +18,13 @@ function getDbConnection() {
   }
   
   if (!pool) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // Add connection timeout and other optimizations
+    pool = new Pool({ 
+      connectionString: process.env.DATABASE_URL,
+      connectionTimeoutMillis: 5000, // 5 second connection timeout
+      idleTimeoutMillis: 30000, // 30 second idle timeout
+      max: 10, // max 10 connections
+    });
     db = drizzle({ client: pool, schema });
   }
   
@@ -28,8 +34,12 @@ function getDbConnection() {
 // Export lazy-initialized database connection
 export { getDbConnection as db };
 
-// Initialize database tables if they don't exist
+// Initialize database tables with timeout
 export async function initializeDatabase() {
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Database initialization timeout')), 10000);
+  });
+
   try {
     console.log("Initializing database tables...");
     
@@ -37,9 +47,27 @@ export async function initializeDatabase() {
       throw new Error("DATABASE_URL is not set");
     }
     
-    // Get fresh connection for initialization
-    const tempPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // Race between database initialization and timeout
+    await Promise.race([
+      initializeDatabaseTables(),
+      timeoutPromise
+    ]);
     
+    console.log("Database tables initialized successfully!");
+  } catch (error) {
+    console.error("Failed to initialize database:", error);
+    throw error;
+  }
+}
+
+async function initializeDatabaseTables() {
+  // Get fresh connection for initialization with timeout
+  const tempPool = new Pool({ 
+    connectionString: process.env.DATABASE_URL!,
+    connectionTimeoutMillis: 5000,
+  });
+  
+  try {
     // Create tables using raw SQL since we don't have migration files
     await tempPool.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -144,12 +172,7 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_focus_sessions_user ON focus_sessions(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id, timestamp);
     `);
-    
-    await tempPool.end(); // Close the temporary connection
-    
-    console.log("Database tables initialized successfully!");
-  } catch (error) {
-    console.error("Failed to initialize database:", error);
-    throw error;
+  } finally {
+    await tempPool.end(); // Always close the temporary connection
   }
 }

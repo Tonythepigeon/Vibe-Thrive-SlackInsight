@@ -22,8 +22,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const start = Date.now();
       
-      // Test basic database connectivity
-      const testUser = await storage.getUserBySlackId("test-connection-check");
+      // Test basic database connectivity with timeout
+      const dbTest = storage.getUserBySlackId("test-connection-check");
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database health check timeout')), 3000)
+      );
+      
+      await Promise.race([dbTest, timeout]);
       const duration = Date.now() - start;
       
       res.json({ 

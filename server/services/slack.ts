@@ -191,7 +191,7 @@ class SlackService {
       const result = await Promise.race([
         this.processFocusCommand(userId, teamId, duration),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+          setTimeout(() => reject(new Error('Operation timeout')), 1000)
         )
       ]);
       
@@ -199,13 +199,39 @@ class SlackService {
     } catch (error) {
       console.error("Focus command error:", error);
       
-      // Return immediate response even on error
       const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // If it's a timeout, provide immediate value without database
+      if (errorMessage === 'Operation timeout') {
+        // Set Slack status directly without database dependency
+        this.setSlackStatusDirectly(userId, teamId, duration).catch(console.error);
+        
+        return {
+          response_type: "ephemeral",
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `🎯 *Focus Mode Activated!*\nDuration: ${duration} minutes\n\n📝 *Quick Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set clear goals for this session\n\n⏰ Timer started! Your Slack status will be updated.`
+              }
+            },
+            {
+              type: "context",
+              elements: [
+                {
+                  type: "mrkdwn",
+                  text: "💡 _Working in offline mode - your session data will sync when connected._"
+                }
+              ]
+            }
+          ]
+        };
+      }
+      
       return {
         response_type: "ephemeral",
-        text: errorMessage === 'Operation timeout' 
-          ? `🎯 Focus session is being set up in the background. Your ${duration}-minute session will start shortly!`
-          : "❌ Failed to start focus session. Please try again."
+        text: "❌ Failed to start focus session. Please try again in a moment."
       };
     }
   }
@@ -286,7 +312,7 @@ class SlackService {
       const result = await Promise.race([
         this.processBreakCommand(userId, teamId, breakType),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+          setTimeout(() => reject(new Error('Operation timeout')), 1000)
         )
       ]);
       
@@ -375,7 +401,7 @@ class SlackService {
       const result = await Promise.race([
         this.processProductivityCommand(userId, teamId),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+          setTimeout(() => reject(new Error('Operation timeout')), 1000)
         )
       ]);
       
@@ -746,6 +772,24 @@ class SlackService {
       general: "⏰ Time for a wellness break!"
     };
     return messages[type as keyof typeof messages] || messages.general;
+  }
+
+  private async setSlackStatusDirectly(userId: string, teamId: string, duration: number) {
+    try {
+      const client = await this.getClient(teamId);
+      const endTime = new Date(Date.now() + duration * 60 * 1000);
+
+      await client.users.profile.set({
+        user: userId,
+        profile: {
+          status_text: `In focus mode until ${endTime.toLocaleTimeString()}`,
+          status_emoji: ":dart:",
+          status_expiration: Math.floor(endTime.getTime() / 1000)
+        }
+      });
+    } catch (error) {
+      console.error("Failed to set Slack status directly:", error);
+    }
   }
 }
 
