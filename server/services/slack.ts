@@ -433,11 +433,54 @@ class SlackService {
     }
   }
 
+  // Debug method to check user tokens (temporary)
+  async debugUserTokens(slackUserId: string) {
+    try {
+      console.log(`\n=== DEBUG: Checking tokens for Slack user ${slackUserId} ===`);
+      
+      // 1. Look up user by Slack ID
+      const user = await storage.getUserBySlackId(slackUserId);
+      console.log(`User lookup result:`, user ? {
+        id: user.id,
+        slackUserId: user.slackUserId,
+        email: user.email,
+        name: user.name
+      } : 'null');
+      
+      if (user) {
+        // 2. Look up integrations for this user
+        const integration = await storage.getIntegrationByType(user.id, 'slack_user');
+        console.log(`Integration lookup result:`, integration ? {
+          id: integration.id,
+          userId: integration.userId,
+          type: integration.type,
+          hasAccessToken: !!integration.accessToken,
+          isActive: integration.isActive,
+          tokenPreview: integration.accessToken ? `${integration.accessToken.substring(0, 10)}...` : 'null'
+        } : 'null');
+        
+        // 3. Try to create client
+        const userClient = await this.getUserClient(user.id);
+        console.log(`User client creation:`, userClient ? 'SUCCESS' : 'FAILED');
+      }
+      
+      console.log(`=== END DEBUG ===\n`);
+      return { user, hasToken: !!user };
+    } catch (error) {
+      console.error("Debug error:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { error: errorMessage };
+    }
+  }
+
   private async processFocusCommand(userId: string, teamId: string, duration: number) {
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
 
     let user = await storage.getUserBySlackId(userId);
+    
+    // DEBUG: Check user tokens
+    await this.debugUserTokens(userId);
     
     // If user doesn't exist, create them automatically
     if (!user) {
@@ -879,15 +922,30 @@ class SlackService {
 
   private async getUserClient(userId: string): Promise<WebClient | null> {
     try {
+      console.log(`Getting user client for userId: ${userId}`);
       const user = await storage.getUser(userId);
-      if (!user) return null;
+      if (!user) {
+        console.log(`No user found for userId: ${userId}`);
+        return null;
+      }
+
+      console.log(`User found: ${user.id}, slackUserId: ${user.slackUserId}`);
 
       // Get user's Slack integration (user token)
       const integration = await storage.getIntegrationByType(userId, 'slack_user');
+      console.log(`Integration query result:`, integration ? {
+        id: integration.id,
+        type: integration.type,
+        hasAccessToken: !!integration.accessToken,
+        isActive: integration.isActive
+      } : 'null');
+
       if (integration && integration.accessToken) {
+        console.log(`Found user token for ${userId}, creating WebClient`);
         return new WebClient(integration.accessToken);
       }
 
+      console.log(`No user token found for ${userId}`);
       return null;
     } catch (error) {
       console.error("Failed to get user client:", error);
@@ -897,13 +955,20 @@ class SlackService {
 
   async setFocusMode(userId: string, duration: number) {
     try {
+      console.log(`setFocusMode called with userId: ${userId}`);
       const user = await storage.getUser(userId);
-      if (!user || !user.slackUserId) return;
+      if (!user || !user.slackUserId) {
+        console.log(`setFocusMode: No user found or no slackUserId for userId: ${userId}`);
+        return;
+      }
+
+      console.log(`setFocusMode: Found user ${user.id} with slackUserId: ${user.slackUserId}`);
 
       // Try to get user token first for status setting
       const userClient = await this.getUserClient(userId);
       
       if (userClient) {
+        console.log(`setFocusMode: User client found, setting status`);
         // We have user token - set status directly!
         const endTime = new Date(Date.now() + duration * 60 * 1000);
         
@@ -915,6 +980,8 @@ class SlackService {
               status_expiration: Math.floor(endTime.getTime() / 1000)
             }
           });
+
+          console.log(`setFocusMode: Successfully set Slack status for user ${user.slackUserId}`);
 
           // Send success DM with bot client
           const botClient = await this.getClient(user.slackTeamId || undefined);
@@ -938,6 +1005,7 @@ class SlackService {
           await this.sendFocusNotification(user, duration);
         }
       } else {
+        console.log(`setFocusMode: No user client found, sending notification instead`);
         // No user token - send helpful notification
         await this.sendFocusNotification(user, duration);
       }
