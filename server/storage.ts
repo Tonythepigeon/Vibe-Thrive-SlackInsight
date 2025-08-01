@@ -444,6 +444,26 @@ export class DatabaseStorage implements IStorage {
       throw error;
     }
   }
+
+  // Clear focus sessions for a user (for demo purposes)
+  async clearUserFocusSessions(userId: string): Promise<void> {
+    try {
+      await this.getDb().delete(focusSessions).where(eq(focusSessions.userId, userId));
+    } catch (error) {
+      console.error("Failed to clear focus sessions:", error);
+      throw error;
+    }
+  }
+
+  // Clear break suggestions for a user (for demo purposes)
+  async clearUserBreakSuggestions(userId: string): Promise<void> {
+    try {
+      await this.getDb().delete(breakSuggestions).where(eq(breakSuggestions.userId, userId));
+    } catch (error) {
+      console.error("Failed to clear break suggestions:", error);
+      throw error;
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();

@@ -41,17 +41,18 @@ async function generateTestMeetingData(userId: string) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + dayOffset);
     
-    // Skip weekends for most meetings
+    // Skip weekends completely - no meetings on Saturday or Sunday
     const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+    if (isWeekend) {
+      continue; // Skip this day entirely
+    }
     
-    // Generate 2-6 meetings per weekday, 0-2 on weekends
-    const meetingCount = isWeekend 
-      ? Math.floor(Math.random() * 3) // 0-2 meetings
-      : Math.floor(Math.random() * 5) + 2; // 2-6 meetings
+    // Generate 2-6 meetings per weekday only
+    const meetingCount = Math.floor(Math.random() * 5) + 2; // 2-6 meetings
     
     const dailyMeetings: InsertMeeting[] = [];
     let totalDailyTime = 0;
-    const maxDailyTime = isWeekend ? 120 : 480; // 2 hours weekend, 8 hours max weekday
+    const maxDailyTime = 480; // 8 hours max weekday
     
     for (let i = 0; i < meetingCount && totalDailyTime < maxDailyTime; i++) {
       const meetingTemplate = meetingTypes[Math.floor(Math.random() * meetingTypes.length)];
@@ -62,10 +63,8 @@ async function generateTestMeetingData(userId: string) {
         continue;
       }
       
-      // Generate meeting time (9 AM to 5 PM on weekdays, more flexible on weekends)
-      const startHour = isWeekend 
-        ? Math.floor(Math.random() * 6) + 10 // 10 AM - 4 PM
-        : Math.floor(Math.random() * 8) + 9;  // 9 AM - 5 PM
+      // Generate meeting time strictly within 8 AM to 5 PM (work hours only)
+      const startHour = Math.floor(Math.random() * 9) + 8; // 8 AM - 4 PM (to allow for meeting duration)
       const startMinute = Math.floor(Math.random() * 4) * 15; // 0, 15, 30, 45 minutes
       
       const startTime = new Date(currentDate);
@@ -73,6 +72,11 @@ async function generateTestMeetingData(userId: string) {
       
       const endTime = new Date(startTime);
       endTime.setMinutes(startTime.getMinutes() + meetingTemplate.duration);
+      
+      // Ensure meeting doesn't go past 5 PM (17:00)
+      if (endTime.getHours() >= 17) {
+        continue; // Skip this meeting if it would go past 5 PM
+      }
       
       // Check for conflicts with existing meetings
       const hasConflict = dailyMeetings.some(meeting => {
@@ -140,19 +144,19 @@ async function generateDemoFocusData(userId: string, startDate: Date) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + dayOffset);
     
-    // Skip weekends for most focus sessions
+    // Skip weekends for focus sessions too
     const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+    if (isWeekend) {
+      continue; // Skip weekends completely
+    }
     
-    // Generate 1-4 focus sessions per weekday, 0-2 on weekends
-    const focusSessionCount = isWeekend 
-      ? Math.floor(Math.random() * 3) // 0-2 sessions
-      : Math.floor(Math.random() * 4) + 1; // 1-4 sessions
+    // Generate 1-4 focus sessions per weekday only
+    const focusSessionCount = Math.floor(Math.random() * 4) + 1; // 1-4 sessions
     
     for (let i = 0; i < focusSessionCount; i++) {
       const duration = focusSessionTypes[Math.floor(Math.random() * focusSessionTypes.length)];
-      const startHour = isWeekend 
-        ? Math.floor(Math.random() * 8) + 10 // 10 AM - 6 PM
-        : Math.floor(Math.random() * 8) + 9;  // 9 AM - 5 PM
+      // Focus sessions during work hours: 8 AM - 5 PM
+      const startHour = Math.floor(Math.random() * 9) + 8; // 8 AM - 4 PM
       const startMinute = Math.floor(Math.random() * 4) * 15;
       
       const startTime = new Date(currentDate);
@@ -160,6 +164,11 @@ async function generateDemoFocusData(userId: string, startDate: Date) {
       
       const endTime = new Date(startTime);
       endTime.setMinutes(startTime.getMinutes() + duration);
+      
+      // Skip if session would go past 5 PM
+      if (endTime.getHours() >= 17) {
+        continue;
+      }
       
       // Create focus session
       try {
@@ -177,10 +186,8 @@ async function generateDemoFocusData(userId: string, startDate: Date) {
       }
     }
     
-    // Generate some break suggestions (2-5 per weekday, 1-2 on weekends)
-    const breakCount = isWeekend
-      ? Math.floor(Math.random() * 2) + 1 // 1-2 breaks
-      : Math.floor(Math.random() * 4) + 2; // 2-5 breaks
+    // Generate some break suggestions (2-5 per weekday only)
+    const breakCount = Math.floor(Math.random() * 4) + 2; // 2-5 breaks
     
     for (let i = 0; i < breakCount; i++) {
       const breakType = breakTypes[Math.floor(Math.random() * breakTypes.length)];
@@ -188,7 +195,7 @@ async function generateDemoFocusData(userId: string, startDate: Date) {
       
       const suggestedTime = new Date(currentDate);
       suggestedTime.setHours(
-        Math.floor(Math.random() * 8) + 9, // 9 AM - 5 PM
+        Math.floor(Math.random() * 9) + 8, // 8 AM - 4 PM
         Math.floor(Math.random() * 4) * 15,
         0, 0
       );
@@ -220,7 +227,34 @@ async function generateDemoFocusData(userId: string, startDate: Date) {
   console.log(`Generated demo focus sessions and break suggestions for user ${userId}`);
 }
 
-export { generateTestMeetingData };
+// Clear focus sessions and break suggestions for demo purposes
+async function clearFocusAndBreakData(userId: string) {
+  try {
+    // Clear focus sessions and break suggestions using storage methods
+    await storage.clearUserFocusSessions(userId);
+    await storage.clearUserBreakSuggestions(userId);
+    
+    // Recalculate productivity metrics without focus/break data
+    const { analyticsService } = await import('./services/analytics');
+    const today = new Date();
+    
+    for (let i = 0; i < 14; i++) {
+      const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+      try {
+        await analyticsService.processProductivityMetrics(userId, date);
+      } catch (error) {
+        console.error(`Failed to recalculate metrics for ${date.toDateString()}:`, error);
+      }
+    }
+    
+    console.log(`Cleared focus sessions and break suggestions for user ${userId}`);
+  } catch (error) {
+    console.error("Failed to clear focus and break data:", error);
+    throw error;
+  }
+}
+
+export { generateTestMeetingData, clearFocusAndBreakData };
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -633,6 +667,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Failed to generate test data:", error);
       res.status(500).json({ error: "Failed to generate test data" });
+    }
+  });
+
+  // Clear focus and break data endpoint
+  app.post("/api/clear-demo-data", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID required" });
+      }
+
+      await clearFocusAndBreakData(userId);
+      res.json({ success: true, message: "Focus sessions and breaks cleared successfully" });
+    } catch (error) {
+      console.error("Failed to clear demo data:", error);
+      res.status(500).json({ error: "Failed to clear demo data" });
     }
   });
 

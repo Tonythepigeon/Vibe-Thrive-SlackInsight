@@ -73,6 +73,26 @@ export default function Dashboard() {
     }
   };
 
+  const clearDemoData = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch("/api/clear-demo-data", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId }),
+      });
+      
+      if (response.ok) {
+        refetch();
+      }
+    } catch (error) {
+      console.error("Failed to clear demo data:", error);
+    }
+  };
+
   const formatTime = (dateString: string, timezone: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
       timeZone: timezone,
@@ -180,12 +200,14 @@ export default function Dashboard() {
           <p className="text-muted-foreground">Here's your productivity overview for this week</p>
         </div>
         <div className="flex items-center space-x-2">
-          {meetings.length === 0 && (
-            <Button onClick={generateTestData} variant="outline">
-              <Calendar className="h-4 w-4 mr-2" />
-              Generate Demo Data
-            </Button>
-          )}
+          <Button onClick={generateTestData} variant="outline">
+            <Calendar className="h-4 w-4 mr-2" />
+            Generate New Data
+          </Button>
+          <Button onClick={clearDemoData} variant="outline">
+            <Target className="h-4 w-4 mr-2" />
+            Clear Focus & Breaks
+          </Button>
           <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -260,13 +282,19 @@ export default function Dashboard() {
                 .sort(([dateA], [dateB]) => new Date(dateA).getTime() - new Date(dateB).getTime())
                 .map(([date, dayMeetings]) => (
                   <div key={date}>
-                    <h3 className="font-semibold text-lg mb-3 flex items-center">
+                    <h3 className={`font-semibold text-lg mb-3 flex items-center ${
+                      date === todayKey 
+                        ? 'p-3 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg' 
+                        : ''
+                    }`}>
                       {date}
                       {date === todayKey && (
-                        <Badge variant="secondary" className="ml-2">Today</Badge>
+                        <Badge variant="default" className="ml-2 bg-blue-500 hover:bg-blue-600">Today</Badge>
                       )}
                     </h3>
-                    <div className="space-y-2">
+                    <div className={`space-y-2 ${
+                      date === todayKey ? 'ml-4' : ''
+                    }`}>
                       {dayMeetings
                         .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
                         .map((meeting) => {
