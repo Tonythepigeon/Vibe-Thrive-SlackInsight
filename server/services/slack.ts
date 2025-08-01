@@ -766,14 +766,40 @@ class SlackService {
 
   private async acceptBreakSuggestion(suggestionId: string, slackUserId: string) {
     try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      // Update the break suggestion
       await storage.updateBreakSuggestion(suggestionId, {
         accepted: true,
         acceptedAt: new Date()
       });
 
+      // Set coffee break status for 20 minutes
+      await this.setBreakMode(user.id, 20);
+
+      // Log activity
+      storage.logActivity({
+        userId: user.id,
+        action: "break_accepted",
+        details: { 
+          suggestionId,
+          duration: 20,
+          type: "coffee_break"
+        }
+      }).catch(console.error);
+
       return {
         replace_original: true,
-        text: "☕ Enjoy your break! You deserve it."
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "☕ *Break time started!*\n\nEnjoy your 20-minute coffee break! ✅ Your Slack status has been updated.\n\n💡 *Break Tips:*\n• Step away from your desk\n• Hydrate and stretch\n• Get some fresh air if possible\n• Let your mind rest"
+            }
+          }
+        ]
       };
     } catch (error) {
       console.error("Accept break error:", error);
@@ -782,10 +808,48 @@ class SlackService {
   }
 
   private async deferBreakSuggestion(suggestionId: string, slackUserId: string) {
-    return {
-      replace_original: true,
-      text: "👍 No problem! I'll remind you about taking breaks later."
-    };
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (user) {
+        // Log the deferral
+        storage.logActivity({
+          userId: user.id,
+          action: "break_deferred",
+          details: { 
+            suggestionId,
+            reason: "maybe_later"
+          }
+        }).catch(console.error);
+      }
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "👍 *No problem!*\n\nI understand you're in the zone right now. Remember that regular breaks help maintain focus and prevent burnout.\n\n💡 *Break Benefits:*\n• Improves creativity and problem-solving\n• Reduces eye strain and physical tension\n• Boosts energy and mood\n• Enhances overall productivity\n\n⏰ Consider taking a break within the next 30-60 minutes. Your brain (and body) will thank you!"
+            }
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "💫 _Tip: Use `/break` anytime you're ready for a wellness break!_"
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Defer break error:", error);
+      return {
+        replace_original: true,
+        text: "👍 No problem! Remember to take breaks when you can - they're important for your wellbeing!"
+      };
+    }
   }
 
   private async processSlackEvent(event: any) {
@@ -1139,6 +1203,94 @@ class SlackService {
       general: "⏰ Time for a wellness break!"
     };
     return messages[type as keyof typeof messages] || messages.general;
+  }
+
+  // New method to set break status (similar to focus mode)
+  async setBreakMode(userId: string, duration: number) {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) return;
+
+      // Try to get user token first for status setting
+      const userClient = await this.getUserClient(userId);
+      
+      if (userClient) {
+        // We have user token - set status directly!
+        const endTime = new Date(Date.now() + duration * 60 * 1000);
+        
+        try {
+          await userClient.users.profile.set({
+            profile: {
+              status_text: "On a coffee break",
+              status_emoji: ":coffee:",
+              status_expiration: Math.floor(endTime.getTime() / 1000)
+            }
+          });
+
+          // Get user's timezone for proper time display
+          const userTimezone = user.timezone || 'America/New_York';
+          const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
+            timeZone: userTimezone,
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+
+          // Send success DM with bot client
+          const botClient = await this.getClient(user.slackTeamId || undefined);
+          await botClient.chat.postMessage({
+            channel: user.slackUserId,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n💡 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
+                }
+              }
+            ]
+          });
+
+          console.log(`Successfully set coffee break status for user ${user.slackUserId}`);
+        } catch (statusError) {
+          console.error("Failed to set break status:", statusError);
+          // Send notification even if status setting fails
+          await this.sendBreakNotification(user, duration);
+        }
+      } else {
+        // No user token - send helpful notification
+        await this.sendBreakNotification(user, duration);
+      }
+    } catch (error) {
+      console.error("Failed to set break mode:", error);
+    }
+  }
+
+  private async sendBreakNotification(user: any, duration: number) {
+    const client = await this.getClient(user.slackTeamId || undefined);
+    const endTime = new Date(Date.now() + duration * 60 * 1000);
+    
+    // Get user's timezone for proper time display
+    const userTimezone = user.timezone || 'America/New_York';
+    const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
+      timeZone: userTimezone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    await client.chat.postMessage({
+      channel: user.slackUserId,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n💡 *Pro tip:* For automatic status updates, make sure you've granted user permissions!\n\n🌟 *Break Tips:*\n• Set your Slack status to "☕ On a coffee break"\n• Step away from your desk\n• Hydrate and stretch\n• Take some deep breaths`
+          }
+        }
+      ]
+    });
   }
 }
 
