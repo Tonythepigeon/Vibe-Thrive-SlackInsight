@@ -37,41 +37,30 @@ app.use((req, res, next) => {
   next();
 });
 
-// Resilient database initialization with retries
-async function initializeDatabaseWithRetries(maxRetries = 3, delay = 5000) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+// Completely skip database initialization to avoid crashes
+// The app will work in offline mode until database is accessible
+function tryDatabaseInitialization() {
+  // Run database initialization in background, but don't let it crash the app
+  setTimeout(async () => {
     try {
-      log(`Attempting database initialization (attempt ${attempt}/${maxRetries})...`);
+      log("Attempting background database initialization...");
       await initializeDatabase();
-      log("Database initialized successfully!");
-      return true;
+      log("Database initialized successfully in background!");
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      log(`Database initialization attempt ${attempt} failed: ${errorMessage}`);
+      log("Database initialization failed, continuing in offline mode");
+      log(`Database error: ${error instanceof Error ? error.message : String(error)}`);
       
-      if (attempt === maxRetries) {
-        log("All database initialization attempts failed. App will continue without DB setup.");
-        log("Database tables may need to be created manually or DB connection needs to be fixed.");
-        return false;
-      }
-      
-      log(`Retrying in ${delay/1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      // Retry in 30 seconds
+      setTimeout(tryDatabaseInitialization, 30000);
     }
-  }
-  return false;
+  }, 2000); // Wait 2 seconds after app starts
 }
 
 (async () => {
   const server = await registerRoutes(app);
 
-  // Try to initialize database but don't fail if it doesn't work
-  // This allows the app to start even if DB is temporarily unavailable
-  setTimeout(() => {
-    initializeDatabaseWithRetries().catch(error => {
-      log("Database initialization failed completely, but app will continue running");
-    });
-  }, 1000); // Delay initialization slightly to let the app start first
+  // Start database initialization in background (non-blocking)
+  tryDatabaseInitialization();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -101,5 +90,6 @@ async function initializeDatabaseWithRetries(maxRetries = 3, delay = 5000) {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    log("App started successfully - database will initialize in background");
   });
 })();

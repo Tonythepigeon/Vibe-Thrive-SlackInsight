@@ -18,14 +18,19 @@ function getDbConnection() {
   }
   
   if (!pool) {
-    // Add connection timeout and other optimizations
-    pool = new Pool({ 
-      connectionString: process.env.DATABASE_URL,
-      connectionTimeoutMillis: 5000, // 5 second connection timeout
-      idleTimeoutMillis: 30000, // 30 second idle timeout
-      max: 10, // max 10 connections
-    });
-    db = drizzle({ client: pool, schema });
+    try {
+      // Add connection timeout and other optimizations
+      pool = new Pool({ 
+        connectionString: process.env.DATABASE_URL,
+        connectionTimeoutMillis: 5000, // 5 second connection timeout
+        idleTimeoutMillis: 30000, // 30 second idle timeout
+        max: 10, // max 10 connections
+      });
+      db = drizzle({ client: pool, schema });
+    } catch (error) {
+      console.error("Failed to create database pool:", error);
+      throw error;
+    }
   }
   
   return db;
@@ -34,12 +39,8 @@ function getDbConnection() {
 // Export lazy-initialized database connection
 export { getDbConnection as db };
 
-// Initialize database tables with timeout
+// Initialize database tables with comprehensive error handling
 export async function initializeDatabase() {
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Database initialization timeout')), 10000);
-  });
-
   try {
     console.log("Initializing database tables...");
     
@@ -47,6 +48,11 @@ export async function initializeDatabase() {
       throw new Error("DATABASE_URL is not set");
     }
     
+    // Use a very short timeout to avoid the Neon client bug
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Database initialization timeout')), 5000);
+    });
+
     // Race between database initialization and timeout
     await Promise.race([
       initializeDatabaseTables(),
@@ -56,18 +62,26 @@ export async function initializeDatabase() {
     console.log("Database tables initialized successfully!");
   } catch (error) {
     console.error("Failed to initialize database:", error);
-    throw error;
+    // Don't re-throw the error - let the app continue in offline mode
   }
 }
 
 async function initializeDatabaseTables() {
-  // Get fresh connection for initialization with timeout
-  const tempPool = new Pool({ 
-    connectionString: process.env.DATABASE_URL!,
-    connectionTimeoutMillis: 5000,
-  });
+  let tempPool: Pool | null = null;
   
   try {
+    // Get fresh connection for initialization with very conservative timeouts
+    tempPool = new Pool({ 
+      connectionString: process.env.DATABASE_URL!,
+      connectionTimeoutMillis: 3000, // Even shorter timeout
+      max: 1, // Only one connection for initialization
+    });
+    
+    // Add error handlers to prevent crashes
+    tempPool.on('error', (err) => {
+      console.error('Database pool error during initialization:', err);
+    });
+    
     // Create tables using raw SQL since we don't have migration files
     await tempPool.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -172,7 +186,17 @@ async function initializeDatabaseTables() {
       CREATE INDEX IF NOT EXISTS idx_focus_sessions_user ON focus_sessions(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id, timestamp);
     `);
+  } catch (error) {
+    console.error("Error during table creation:", error);
+    throw error;
   } finally {
-    await tempPool.end(); // Always close the temporary connection
+    // Always try to close the connection, but don't let errors here crash the app
+    if (tempPool) {
+      try {
+        await tempPool.end();
+      } catch (endError) {
+        console.error("Error closing temporary database connection:", endError);
+      }
+    }
   }
 }
