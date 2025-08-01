@@ -17,6 +17,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Database health check
+  app.get("/api/health/db", async (req, res) => {
+    try {
+      const start = Date.now();
+      
+      // Test basic database connectivity
+      const testUser = await storage.getUserBySlackId("test-connection-check");
+      const duration = Date.now() - start;
+      
+      res.json({ 
+        status: "ok", 
+        database: "connected",
+        queryTime: `${duration}ms`,
+        timestamp: new Date().toISOString() 
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ 
+        status: "error", 
+        database: "failed",
+        error: errorMessage,
+        timestamp: new Date().toISOString() 
+      });
+    }
+  });
+
   // Slack App endpoints - Fix context binding by using arrow functions
   app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
   app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
