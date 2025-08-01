@@ -187,11 +187,29 @@ class SlackService {
     const duration = parseInt(text) || 25; // Default 25 minutes
     
     try {
-      const user = await storage.getUserBySlackId(userId);
+      let user = await storage.getUserBySlackId(userId);
+      
+      // If user doesn't exist, create them automatically
       if (!user) {
-        return {
-          text: "Please connect your account first by visiting the productivity dashboard."
-        };
+        try {
+          user = await storage.createUser({
+            slackUserId: userId,
+            slackTeamId: teamId,
+            email: `${userId}@slack.local`, // Placeholder email
+            name: "Slack User", // Will be updated when we get more info
+          });
+          
+          await storage.logActivity({
+            userId: user.id,
+            action: "user_auto_created",
+            details: { slackUserId: userId, teamId, trigger: "focus_command" }
+          });
+        } catch (createError) {
+          console.error("Failed to create user:", createError);
+          return {
+            text: "Failed to set up your account. Please try again or contact support."
+          };
+        }
       }
 
       // Check for active focus session
@@ -251,11 +269,29 @@ class SlackService {
     const breakType = text.toLowerCase() || "general";
     
     try {
-      const user = await storage.getUserBySlackId(userId);
+      let user = await storage.getUserBySlackId(userId);
+      
+      // If user doesn't exist, create them automatically
       if (!user) {
-        return {
-          text: "Please connect your account first by visiting the productivity dashboard."
-        };
+        try {
+          user = await storage.createUser({
+            slackUserId: userId,
+            slackTeamId: teamId,
+            email: `${userId}@slack.local`, // Placeholder email
+            name: "Slack User", // Will be updated when we get more info
+          });
+          
+          await storage.logActivity({
+            userId: user.id,
+            action: "user_auto_created",
+            details: { slackUserId: userId, teamId, trigger: "break_command" }
+          });
+        } catch (createError) {
+          console.error("Failed to create user:", createError);
+          return {
+            text: "Failed to set up your account. Please try again or contact support."
+          };
+        }
       }
 
       const suggestion = await storage.createBreakSuggestion({
@@ -311,11 +347,29 @@ class SlackService {
 
   private async handleProductivityCommand(text: string, userId: string, teamId: string) {
     try {
-      const user = await storage.getUserBySlackId(userId);
+      let user = await storage.getUserBySlackId(userId);
+      
+      // If user doesn't exist, create them automatically
       if (!user) {
-        return {
-          text: "Please connect your account first by visiting the productivity dashboard."
-        };
+        try {
+          user = await storage.createUser({
+            slackUserId: userId,
+            slackTeamId: teamId,
+            email: `${userId}@slack.local`, // Placeholder email
+            name: "Slack User", // Will be updated when we get more info
+          });
+          
+          await storage.logActivity({
+            userId: user.id,
+            action: "user_auto_created",
+            details: { slackUserId: userId, teamId, trigger: "productivity_command" }
+          });
+        } catch (createError) {
+          console.error("Failed to create user:", createError);
+          return {
+            text: "Failed to set up your account. Please try again or contact support."
+          };
+        }
       }
 
       const today = new Date();
