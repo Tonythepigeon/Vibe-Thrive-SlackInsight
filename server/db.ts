@@ -198,6 +198,14 @@ async function initializeDatabaseTables() {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='slack_teams' AND column_name='is_active') THEN
             ALTER TABLE slack_teams ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
           END IF;
+          
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integrations' AND column_name='metadata') THEN
+            ALTER TABLE integrations ADD COLUMN metadata JSONB;
+          END IF;
+          
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integrations' AND column_name='is_active') THEN
+            ALTER TABLE integrations ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+          END IF;
         END $$;
       `);
       console.log("Applied schema fixes for existing tables");
