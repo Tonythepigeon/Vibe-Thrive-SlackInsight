@@ -17,12 +17,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Slack App endpoints
-  app.post("/api/slack/events", slackService.handleSlackEvents);
-  app.get("/api/slack/oauth", slackService.handleOAuth);
-  app.get("/api/slack/install", slackService.handleInstall);
-  app.post("/api/slack/commands", slackService.handleSlashCommand);
-  app.post("/api/slack/interactive", slackService.handleInteractivity);
+  // Slack App endpoints - Fix context binding by using arrow functions
+  app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
+  app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
+  app.get("/api/slack/install", (req, res) => slackService.handleInstall(req, res));
+  app.post("/api/slack/commands", (req, res) => slackService.handleSlashCommand(req, res));
+  app.post("/api/slack/interactive", (req, res) => slackService.handleInteractivity(req, res));
 
   // User management
   app.get("/api/users/:id", async (req, res) => {
@@ -97,8 +97,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Calendar OAuth endpoints
-  app.get("/api/oauth/google/callback", calendarService.handleGoogleCallback);
-  app.get("/api/oauth/outlook/callback", calendarService.handleOutlookCallback);
+  app.get("/api/oauth/google/callback", (req, res) => calendarService.handleGoogleCallback(req, res));
+  app.get("/api/oauth/outlook/callback", (req, res) => calendarService.handleOutlookCallback(req, res));
 
   // Meeting analytics
   app.get("/api/users/:userId/meetings", async (req, res) => {
