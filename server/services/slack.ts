@@ -141,7 +141,7 @@ class SlackService {
       });
 
       if (result.ok && result.team && result.access_token) {
-        // Store team information
+        // Store team information with bot token
         await storage.createSlackTeam({
           slackTeamId: result.team.id!,
           teamName: result.team.name!,
@@ -152,18 +152,42 @@ class SlackService {
         // Store bot token for this team
         this.clients.set(result.team.id!, new WebClient(result.access_token));
 
-        // If authed_user is present, create user record
-        if (result.authed_user) {
+        // If authed_user is present, create/update user record with user token
+        if (result.authed_user && result.authed_user.access_token) {
           try {
-            await storage.createUser({
-              slackUserId: result.authed_user.id!,
-              email: `${result.authed_user.id}@slack.local`, // Placeholder, will be updated
-              name: "Slack User",
-              slackTeamId: result.team.id!,
+            // Check if user already exists
+            let user = await storage.getUserBySlackId(result.authed_user.id!);
+            
+            if (user) {
+              // Update existing user with user token
+              await storage.updateUser(user.id, {
+                name: result.authed_user.id!, // Will be updated when we get more info
+              });
+            } else {
+              // Create new user
+              user = await storage.createUser({
+                slackUserId: result.authed_user.id!,
+                email: `${result.authed_user.id}@slack.local`, // Placeholder, will be updated
+                name: "Slack User",
+                slackTeamId: result.team.id!,
+              });
+            }
+
+            // Store user token in integrations table
+            await storage.createIntegration({
+              userId: user.id,
+              type: 'slack_user',
+              accessToken: result.authed_user.access_token,
+              refreshToken: result.authed_user.refresh_token || null,
+              // User tokens don't typically expire, but store if provided
+              expiresAt: null,
+              isActive: true,
             });
+
+            console.log(`Stored user token for ${result.authed_user.id}`);
           } catch (error) {
             // User might already exist
-            console.log("User already exists or creation failed:", error);
+            console.log("User setup during OAuth:", error);
           }
         }
 
@@ -184,16 +208,19 @@ class SlackService {
 
   async handleInstall(req: any, res: any) {
     try {
-      const scopes = [
+      const botScopes = [
         'commands',
         'chat:write',
         'users:read',
-        'users.profile:write',
-        'users.profile:read',
         'team:read'
       ].join(',');
       
-      const installUrl = `https://slack.com/oauth/v2/authorize?client_id=${process.env.SLACK_CLIENT_ID}&scope=${scopes}&user_scope=`;
+      const userScopes = [
+        'users.profile:write',
+        'users.profile:read'
+      ].join(',');
+      
+      const installUrl = `https://slack.com/oauth/v2/authorize?client_id=${process.env.SLACK_CLIENT_ID}&scope=${botScopes}&user_scope=${userScopes}`;
       res.json({ installUrl });
     } catch (error) {
       res.status(500).json({ error: "Failed to generate install URL" });
@@ -323,7 +350,7 @@ class SlackService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n💡 *Pro tip:* Set your Slack status to "🎯 In focus mode" to let teammates know!\n\nI'll send you a DM with session details and tips.`
+            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n⚡ Setting up your Slack status automatically...\n\nI'll send you a DM with session details and confirmation!`
           }
         },
         {
@@ -718,72 +745,172 @@ class SlackService {
     }
   }
 
+  private async getUserClient(userId: string): Promise<WebClient | null> {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user) return null;
+
+      // Get user's Slack integration (user token)
+      const integration = await storage.getIntegrationByType(userId, 'slack_user');
+      if (integration && integration.accessToken) {
+        return new WebClient(integration.accessToken);
+      }
+
+      return null;
+    } catch (error) {
+      console.error("Failed to get user client:", error);
+      return null;
+    }
+  }
+
   async setFocusMode(userId: string, duration: number) {
-    // Note: Bot tokens cannot set user statuses. This would require user tokens.
-    // Instead, we'll send a helpful message about manually setting status
     try {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
 
-      const client = await this.getClient(user.slackTeamId || undefined);
-      const endTime = new Date(Date.now() + duration * 60 * 1000);
-
-      // Send a DM with instructions on how to set status manually
-      await client.chat.postMessage({
-        channel: user.slackUserId,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n💡 *Pro tip:* Set your Slack status to "🎯 In focus mode" to let teammates know you're in deep work!`
+      // Try to get user token first for status setting
+      const userClient = await this.getUserClient(userId);
+      
+      if (userClient) {
+        // We have user token - set status directly!
+        const endTime = new Date(Date.now() + duration * 60 * 1000);
+        
+        try {
+          await userClient.users.profile.set({
+            profile: {
+              status_text: `In focus mode until ${endTime.toLocaleTimeString()}`,
+              status_emoji: ":dart:",
+              status_expiration: Math.floor(endTime.getTime() / 1000)
             }
-          },
-          {
-            type: "context",
-            elements: [
+          });
+
+          // Send success DM with bot client
+          const botClient = await this.getClient(user.slackTeamId || undefined);
+          await botClient.chat.postMessage({
+            channel: user.slackUserId,
+            blocks: [
               {
-                type: "mrkdwn",
-                text: "🔄 _Your focus session is being tracked. Click 'End Focus Session' when you're done._"
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n✅ Your Slack status has been automatically updated!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set clear goals for this session`
+                }
               }
             ]
-          }
-        ]
-      });
+          });
 
-      // Update the focus session to mark status as set (informational message sent)
+          console.log(`Successfully set focus status for user ${user.slackUserId}`);
+        } catch (statusError) {
+          console.error("Failed to set status, falling back to notification:", statusError);
+          // Fall back to notification if status setting fails
+          await this.sendFocusNotification(user, duration);
+        }
+      } else {
+        // No user token - send helpful notification
+        await this.sendFocusNotification(user, duration);
+      }
+
+      // Update the focus session to mark status as set
       const activeSession = await storage.getActiveFocusSession(userId);
       if (activeSession) {
         await storage.updateFocusSession(activeSession.id, { slackStatusSet: true });
       }
     } catch (error) {
-      console.error("Failed to send focus mode notification:", error);
+      console.error("Failed to set focus mode:", error);
     }
   }
 
   async clearFocusMode(userId: string) {
-    // Send a completion message instead of trying to clear status
     try {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
 
-      const client = await this.getClient(user.slackTeamId || undefined);
-
-      await client.chat.postMessage({
-        channel: user.slackUserId,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `✅ *Focus Session Complete!*\n\nGreat work! You've finished your focus session. Time to take a well-deserved break or move on to your next task.\n\n💡 _Don't forget to update your Slack status if you set it manually._`
+      // Try to get user token first for status clearing
+      const userClient = await this.getUserClient(userId);
+      
+      if (userClient) {
+        // We have user token - clear status directly!
+        try {
+          await userClient.users.profile.set({
+            profile: {
+              status_text: "",
+              status_emoji: "",
+              status_expiration: 0
             }
-          }
-        ]
-      });
+          });
+
+          // Send completion DM with bot client
+          const botClient = await this.getClient(user.slackTeamId || undefined);
+          await botClient.chat.postMessage({
+            channel: user.slackUserId,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `✅ *Focus Session Complete!*\n\nGreat work! You've finished your focus session.\n\n✅ Your Slack status has been automatically cleared.\n\nTime to take a well-deserved break or move on to your next task! 🎉`
+                }
+              }
+            ]
+          });
+
+          console.log(`Successfully cleared focus status for user ${user.slackUserId}`);
+        } catch (statusError) {
+          console.error("Failed to clear status, sending notification:", statusError);
+          // Fall back to notification if status clearing fails
+          await this.sendFocusCompletionNotification(user);
+        }
+      } else {
+        // No user token - send helpful notification
+        await this.sendFocusCompletionNotification(user);
+      }
     } catch (error) {
-      console.error("Failed to send focus completion message:", error);
+      console.error("Failed to clear focus mode:", error);
     }
+  }
+
+  private async sendFocusNotification(user: any, duration: number) {
+    const client = await this.getClient(user.slackTeamId || undefined);
+    const endTime = new Date(Date.now() + duration * 60 * 1000);
+
+    await client.chat.postMessage({
+      channel: user.slackUserId,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n💡 *Pro tip:* For automatic status updates, reinstall the app from your workspace's App Directory to grant user permissions!\n\n📝 *Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session`
+          }
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: "🔄 _Your focus session is being tracked. Click 'End Focus Session' when you're done._"
+            }
+          ]
+        }
+      ]
+    });
+  }
+
+  private async sendFocusCompletionNotification(user: any) {
+    const client = await this.getClient(user.slackTeamId || undefined);
+
+    await client.chat.postMessage({
+      channel: user.slackUserId,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `✅ *Focus Session Complete!*\n\nGreat work! You've finished your focus session. Time to take a well-deserved break or move on to your next task.\n\n💡 _Don't forget to update your Slack status if you set it manually._`
+          }
+        }
+      ]
+    });
   }
 
   async sendProductivitySummary(userId: string, summary: any) {
