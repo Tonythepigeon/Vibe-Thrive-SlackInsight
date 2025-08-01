@@ -221,9 +221,6 @@ class SlackService {
       
       // If it's a timeout, provide immediate value without database
       if (errorMessage === 'Operation timeout') {
-        // Set Slack status directly without database dependency
-        this.setSlackStatusDirectly(userId, teamId, duration).catch(console.error);
-        
         return {
           response_type: "ephemeral",
           blocks: [
@@ -231,7 +228,7 @@ class SlackService {
               type: "section",
               text: {
                 type: "mrkdwn",
-                text: `🎯 *Focus Mode Activated!*\nDuration: ${duration} minutes\n\n📝 *Quick Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set clear goals for this session\n\n⏰ Timer started! Your Slack status will be updated.`
+                text: `🎯 *Focus Mode Activated!*\nDuration: ${duration} minutes\n\n📝 *Quick Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session\n\n⏰ Timer started! You're now in focus mode.`
               }
             },
             {
@@ -326,7 +323,7 @@ class SlackService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\nYour Slack status is being updated.`
+            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n💡 *Pro tip:* Set your Slack status to "🎯 In focus mode" to let teammates know!\n\nI'll send you a DM with session details and tips.`
           }
         },
         {
@@ -722,6 +719,8 @@ class SlackService {
   }
 
   async setFocusMode(userId: string, duration: number) {
+    // Note: Bot tokens cannot set user statuses. This would require user tokens.
+    // Instead, we'll send a helpful message about manually setting status
     try {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
@@ -729,42 +728,61 @@ class SlackService {
       const client = await this.getClient(user.slackTeamId || undefined);
       const endTime = new Date(Date.now() + duration * 60 * 1000);
 
-      await client.users.profile.set({
-        user: user.slackUserId,
-        profile: {
-          status_text: `In focus mode until ${endTime.toLocaleTimeString()}`,
-          status_emoji: ":dart:",
-          status_expiration: Math.floor(endTime.getTime() / 1000)
-        }
+      // Send a DM with instructions on how to set status manually
+      await client.chat.postMessage({
+        channel: user.slackUserId,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `🎯 *Focus Session Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTime.toLocaleTimeString()}\n\n💡 *Pro tip:* Set your Slack status to "🎯 In focus mode" to let teammates know you're in deep work!`
+            }
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "🔄 _Your focus session is being tracked. Click 'End Focus Session' when you're done._"
+              }
+            ]
+          }
+        ]
       });
 
-      // Update the focus session to mark status as set
+      // Update the focus session to mark status as set (informational message sent)
       const activeSession = await storage.getActiveFocusSession(userId);
       if (activeSession) {
         await storage.updateFocusSession(activeSession.id, { slackStatusSet: true });
       }
     } catch (error) {
-      console.error("Failed to set focus mode:", error);
+      console.error("Failed to send focus mode notification:", error);
     }
   }
 
   async clearFocusMode(userId: string) {
+    // Send a completion message instead of trying to clear status
     try {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
 
       const client = await this.getClient(user.slackTeamId || undefined);
 
-      await client.users.profile.set({
-        user: user.slackUserId,
-        profile: {
-          status_text: "",
-          status_emoji: "",
-          status_expiration: 0
-        }
+      await client.chat.postMessage({
+        channel: user.slackUserId,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `✅ *Focus Session Complete!*\n\nGreat work! You've finished your focus session. Time to take a well-deserved break or move on to your next task.\n\n💡 _Don't forget to update your Slack status if you set it manually._`
+            }
+          }
+        ]
       });
     } catch (error) {
-      console.error("Failed to clear focus mode:", error);
+      console.error("Failed to send focus completion message:", error);
     }
   }
 
@@ -822,24 +840,6 @@ class SlackService {
       general: "⏰ Time for a wellness break!"
     };
     return messages[type as keyof typeof messages] || messages.general;
-  }
-
-  private async setSlackStatusDirectly(userId: string, teamId: string, duration: number) {
-    try {
-      const client = await this.getClient(teamId);
-      const endTime = new Date(Date.now() + duration * 60 * 1000);
-
-      await client.users.profile.set({
-        user: userId,
-        profile: {
-          status_text: `In focus mode until ${endTime.toLocaleTimeString()}`,
-          status_emoji: ":dart:",
-          status_expiration: Math.floor(endTime.getTime() / 1000)
-        }
-      });
-    } catch (error) {
-      console.error("Failed to set Slack status directly:", error);
-    }
   }
 }
 
