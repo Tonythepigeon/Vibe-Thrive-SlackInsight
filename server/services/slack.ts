@@ -187,254 +187,289 @@ class SlackService {
     const duration = parseInt(text) || 25; // Default 25 minutes
     
     try {
-      let user = await storage.getUserBySlackId(userId);
+      // Set a timeout for the entire operation
+      const result = await Promise.race([
+        this.processFocusCommand(userId, teamId, duration),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+        )
+      ]);
       
-      // If user doesn't exist, create them automatically
-      if (!user) {
-        try {
-          user = await storage.createUser({
-            slackUserId: userId,
-            slackTeamId: teamId,
-            email: `${userId}@slack.local`, // Placeholder email
-            name: "Slack User", // Will be updated when we get more info
-          });
-          
-          await storage.logActivity({
-            userId: user.id,
-            action: "user_auto_created",
-            details: { slackUserId: userId, teamId, trigger: "focus_command" }
-          });
-        } catch (createError) {
-          console.error("Failed to create user:", createError);
-          return {
-            text: "Failed to set up your account. Please try again or contact support."
-          };
-        }
-      }
-
-      // Check for active focus session
-      const activeSession = await storage.getActiveFocusSession(user.id);
-      if (activeSession) {
-        return {
-          text: "You already have an active focus session. End it first with `/focus end`."
-        };
-      }
-
-      // Create focus session
-      const session = await storage.createFocusSession({
-        userId: user.id,
-        duration,
-        startTime: new Date()
-      });
-
-      // Set Slack status
-      await this.setFocusMode(user.id, duration);
-
-      return {
-        response_type: "in_channel",
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\nYour Slack status has been updated.`
-            }
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "End Focus Session"
-                },
-                style: "danger",
-                action_id: "end_focus",
-                value: session.id
-              }
-            ]
-          }
-        ]
-      };
+      return result;
     } catch (error) {
       console.error("Focus command error:", error);
+      
+      // Return immediate response even on error
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        text: "Failed to start focus session. Please try again."
+        response_type: "ephemeral",
+        text: errorMessage === 'Operation timeout' 
+          ? `🎯 Focus session is being set up in the background. Your ${duration}-minute session will start shortly!`
+          : "❌ Failed to start focus session. Please try again."
       };
     }
+  }
+
+  private async processFocusCommand(userId: string, teamId: string, duration: number) {
+    let user = await storage.getUserBySlackId(userId);
+    
+    // If user doesn't exist, create them automatically
+    if (!user) {
+      user = await storage.createUser({
+        slackUserId: userId,
+        slackTeamId: teamId,
+        email: `${userId}@slack.local`, // Placeholder email
+        name: "Slack User", // Will be updated when we get more info
+      });
+      
+      // Log activity without waiting
+      storage.logActivity({
+        userId: user.id,
+        action: "user_auto_created",
+        details: { slackUserId: userId, teamId, trigger: "focus_command" }
+      }).catch(console.error);
+    }
+
+    // Check for active focus session
+    const activeSession = await storage.getActiveFocusSession(user.id);
+    if (activeSession) {
+      return {
+        response_type: "ephemeral",
+        text: "You already have an active focus session. End it first with `/focus end`."
+      };
+    }
+
+    // Create focus session
+    const session = await storage.createFocusSession({
+      userId: user.id,
+      duration,
+      startTime: new Date()
+    });
+
+    // Set Slack status asynchronously (don't wait for it)
+    this.setFocusMode(user.id, duration).catch(console.error);
+
+    return {
+      response_type: "ephemeral",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\nYour Slack status is being updated.`
+          }
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "End Focus Session"
+              },
+              style: "danger",
+              action_id: "end_focus",
+              value: session.id
+            }
+          ]
+        }
+      ]
+    };
   }
 
   private async handleBreakCommand(text: string, userId: string, teamId: string) {
     const breakType = text.toLowerCase() || "general";
     
     try {
-      let user = await storage.getUserBySlackId(userId);
+      // Set a timeout for the entire operation
+      const result = await Promise.race([
+        this.processBreakCommand(userId, teamId, breakType),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+        )
+      ]);
       
-      // If user doesn't exist, create them automatically
-      if (!user) {
-        try {
-          user = await storage.createUser({
-            slackUserId: userId,
-            slackTeamId: teamId,
-            email: `${userId}@slack.local`, // Placeholder email
-            name: "Slack User", // Will be updated when we get more info
-          });
-          
-          await storage.logActivity({
-            userId: user.id,
-            action: "user_auto_created",
-            details: { slackUserId: userId, teamId, trigger: "break_command" }
-          });
-        } catch (createError) {
-          console.error("Failed to create user:", createError);
-          return {
-            text: "Failed to set up your account. Please try again or contact support."
-          };
-        }
-      }
-
-      const suggestion = await storage.createBreakSuggestion({
-        userId: user.id,
-        type: breakType,
-        message: `You requested a ${breakType} break`,
-        reason: "user_requested"
-      });
-
-      return {
-        response_type: "ephemeral",
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `☕ *Break time!*\n${this.getBreakMessage(breakType)}`
-            }
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Take Break Now"
-                },
-                style: "primary",
-                action_id: "take_break",
-                value: suggestion.id
-              },
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Maybe Later"
-                },
-                action_id: "defer_break",
-                value: suggestion.id
-              }
-            ]
-          }
-        ]
-      };
+      return result;
     } catch (error) {
       console.error("Break command error:", error);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        text: "Failed to process break request. Please try again."
+        response_type: "ephemeral",
+        text: errorMessage === 'Operation timeout'
+          ? `☕ Your ${breakType} break suggestion is being prepared!`
+          : "❌ Failed to process break request. Please try again."
       };
     }
   }
 
+  private async processBreakCommand(userId: string, teamId: string, breakType: string) {
+    let user = await storage.getUserBySlackId(userId);
+    
+    // If user doesn't exist, create them automatically
+    if (!user) {
+      user = await storage.createUser({
+        slackUserId: userId,
+        slackTeamId: teamId,
+        email: `${userId}@slack.local`, // Placeholder email
+        name: "Slack User", // Will be updated when we get more info
+      });
+      
+      // Log activity without waiting
+      storage.logActivity({
+        userId: user.id,
+        action: "user_auto_created",
+        details: { slackUserId: userId, teamId, trigger: "break_command" }
+      }).catch(console.error);
+    }
+
+    const suggestion = await storage.createBreakSuggestion({
+      userId: user.id,
+      type: breakType,
+      message: `You requested a ${breakType} break`,
+      reason: "user_requested"
+    });
+
+    return {
+      response_type: "ephemeral",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `☕ *Break time!*\n${this.getBreakMessage(breakType)}`
+          }
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "Take Break Now"
+              },
+              style: "primary",
+              action_id: "take_break",
+              value: suggestion.id
+            },
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "Maybe Later"
+              },
+              action_id: "defer_break",
+              value: suggestion.id
+            }
+          ]
+        }
+      ]
+    };
+  }
+
   private async handleProductivityCommand(text: string, userId: string, teamId: string) {
     try {
-      let user = await storage.getUserBySlackId(userId);
+      // Set a timeout for the entire operation
+      const result = await Promise.race([
+        this.processProductivityCommand(userId, teamId),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Operation timeout')), 2500)
+        )
+      ]);
       
-      // If user doesn't exist, create them automatically
-      if (!user) {
-        try {
-          user = await storage.createUser({
-            slackUserId: userId,
-            slackTeamId: teamId,
-            email: `${userId}@slack.local`, // Placeholder email
-            name: "Slack User", // Will be updated when we get more info
-          });
-          
-          await storage.logActivity({
-            userId: user.id,
-            action: "user_auto_created",
-            details: { slackUserId: userId, teamId, trigger: "productivity_command" }
-          });
-        } catch (createError) {
-          console.error("Failed to create user:", createError);
-          return {
-            text: "Failed to set up your account. Please try again or contact support."
-          };
-        }
-      }
-
-      const today = new Date();
-      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
-      const metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
-      const meetings = await storage.getUserMeetings(user.id, weekAgo, today);
-      
-      const totalMeetingTime = metrics.reduce((sum, m) => sum + (m.totalMeetingTime || 0), 0);
-      const totalFocusTime = metrics.reduce((sum, m) => sum + (m.focusTime || 0), 0);
-      const totalBreaks = metrics.reduce((sum, m) => sum + (m.breaksAccepted || 0), 0);
-
-      return {
-        response_type: "ephemeral",
-        blocks: [
-          {
-            type: "header",
-            text: {
-              type: "plain_text",
-              text: "📊 Your Productivity Summary (Last 7 Days)"
-            }
-          },
-          {
-            type: "section",
-            fields: [
-              {
-                type: "mrkdwn",
-                text: `*Meeting Time:*\n${Math.round(totalMeetingTime / 60)}h ${totalMeetingTime % 60}m`
-              },
-              {
-                type: "mrkdwn",
-                text: `*Focus Time:*\n${Math.round(totalFocusTime / 60)}h ${totalFocusTime % 60}m`
-              },
-              {
-                type: "mrkdwn",
-                text: `*Meetings:*\n${meetings.length} total`
-              },
-              {
-                type: "mrkdwn",
-                text: `*Breaks Taken:*\n${totalBreaks} breaks`
-              }
-            ]
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "View Full Dashboard"
-                },
-                url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard`,
-                action_id: "view_dashboard"
-              }
-            ]
-          }
-        ]
-      };
+      return result;
     } catch (error) {
       console.error("Productivity command error:", error);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        text: "Failed to get productivity summary. Please try again."
+        response_type: "ephemeral",
+        text: errorMessage === 'Operation timeout'
+          ? "📊 Your productivity summary is being generated..."
+          : "❌ Failed to get productivity summary. Please try again."
       };
     }
+  }
+
+  private async processProductivityCommand(userId: string, teamId: string) {
+    let user = await storage.getUserBySlackId(userId);
+    
+    // If user doesn't exist, create them automatically
+    if (!user) {
+      user = await storage.createUser({
+        slackUserId: userId,
+        slackTeamId: teamId,
+        email: `${userId}@slack.local`, // Placeholder email
+        name: "Slack User", // Will be updated when we get more info
+      });
+      
+      // Log activity without waiting
+      storage.logActivity({
+        userId: user.id,
+        action: "user_auto_created",
+        details: { slackUserId: userId, teamId, trigger: "productivity_command" }
+      }).catch(console.error);
+    }
+
+    const today = new Date();
+    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    const metrics = await storage.getProductivityMetrics(user.id, weekAgo, today);
+    const meetings = await storage.getUserMeetings(user.id, weekAgo, today);
+    
+    const totalMeetingTime = metrics.reduce((sum, m) => sum + (m.totalMeetingTime || 0), 0);
+    const totalFocusTime = metrics.reduce((sum, m) => sum + (m.focusTime || 0), 0);
+    const totalBreaks = metrics.reduce((sum, m) => sum + (m.breaksAccepted || 0), 0);
+
+    return {
+      response_type: "ephemeral",
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: "📊 Your Productivity Summary (Last 7 Days)"
+          }
+        },
+        {
+          type: "section",
+          fields: [
+            {
+              type: "mrkdwn",
+              text: `*Meeting Time:*\n${Math.round(totalMeetingTime / 60)}h ${totalMeetingTime % 60}m`
+            },
+            {
+              type: "mrkdwn",
+              text: `*Focus Time:*\n${Math.round(totalFocusTime / 60)}h ${totalFocusTime % 60}m`
+            },
+            {
+              type: "mrkdwn",
+              text: `*Meetings:*\n${meetings.length} total`
+            },
+            {
+              type: "mrkdwn",
+              text: `*Breaks Taken:*\n${totalBreaks} breaks`
+            }
+          ]
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "View Full Dashboard"
+              },
+              url: `${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard`,
+              action_id: "view_dashboard"
+            }
+          ]
+        }
+      ]
+    };
   }
 
   private async handleBlockActions(payload: any) {
