@@ -93,6 +93,26 @@ export default function Dashboard() {
     }
   };
 
+  const skipTimeForward = async (days: number) => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch("/api/skip-time", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId, days }),
+      });
+      
+      if (response.ok) {
+        refetch();
+      }
+    } catch (error) {
+      console.error("Failed to skip time:", error);
+    }
+  };
+
   const formatTime = (dateString: string, timezone: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
       timeZone: timezone,
@@ -207,6 +227,12 @@ export default function Dashboard() {
           <Button onClick={clearDemoData} variant="outline">
             <Target className="h-4 w-4 mr-2" />
             Clear Focus & Breaks
+          </Button>
+          <Button onClick={() => skipTimeForward(1)} variant="outline" size="sm">
+            ⏩ +1 Day
+          </Button>
+          <Button onClick={() => skipTimeForward(7)} variant="outline" size="sm">
+            ⏩ +1 Week
           </Button>
           <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="h-4 w-4" />

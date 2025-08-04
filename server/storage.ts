@@ -520,6 +520,21 @@ export class DatabaseStorage implements IStorage {
       throw error;
     }
   }
+
+  // Update a meeting (for demo time skipping)
+  async updateMeeting(meetingId: string, updates: Partial<InsertMeeting>): Promise<Meeting> {
+    try {
+      const [updated] = await this.getDb()
+        .update(meetings)
+        .set(updates)
+        .where(eq(meetings.id, meetingId))
+        .returning();
+      return updated;
+    } catch (error) {
+      console.error("Failed to update meeting:", error);
+      throw error;
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();

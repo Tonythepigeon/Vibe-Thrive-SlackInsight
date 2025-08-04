@@ -294,7 +294,77 @@ async function clearFocusAndBreakData(userId: string) {
   }
 }
 
-export { generateTestMeetingData, clearFocusAndBreakData };
+// Skip time forward for demo purposes
+async function skipTimeForward(userId: string, days: number) {
+  console.log(`Skipping ${days} days forward for user ${userId}`);
+  
+  try {
+    // Move all meetings forward by the specified number of days
+    const allMeetings = await storage.getUserMeetings(userId, new Date(0), new Date(2030, 0, 1)); // Get all meetings
+    
+    for (const meeting of allMeetings) {
+      const newStartTime = new Date(meeting.startTime);
+      newStartTime.setDate(newStartTime.getDate() + days);
+      
+      const newEndTime = new Date(meeting.endTime);
+      newEndTime.setDate(newEndTime.getDate() + days);
+      
+      // Update the meeting with new times
+      await storage.updateMeeting(meeting.id, {
+        startTime: newStartTime,
+        endTime: newEndTime
+      });
+    }
+    
+    console.log(`Moved ${allMeetings.length} meetings forward by ${days} days`);
+    
+    // Move all focus sessions forward
+    const allFocusSessions = await storage.getFocusSessionsByDateRange(userId, new Date(0), new Date(2030, 0, 1));
+    
+    for (const session of allFocusSessions) {
+      const newStartTime = new Date(session.startTime);
+      newStartTime.setDate(newStartTime.getDate() + days);
+      
+      const updateData: any = { startTime: newStartTime };
+      
+      if (session.endTime) {
+        const newEndTime = new Date(session.endTime);
+        newEndTime.setDate(newEndTime.getDate() + days);
+        updateData.endTime = newEndTime;
+      }
+      
+      await storage.updateFocusSession(session.id, updateData);
+    }
+    
+    console.log(`Moved ${allFocusSessions.length} focus sessions forward by ${days} days`);
+    
+    // Clear and recalculate productivity metrics for the new time period
+    await storage.clearUserProductivityMetrics(userId);
+    
+    // Recalculate metrics for the new date range
+    const { analyticsService } = await import('./services/analytics');
+    const today = new Date();
+    today.setDate(today.getDate() + days);
+    
+    for (let i = -7; i < 7; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i);
+      
+      try {
+        await analyticsService.processProductivityMetrics(userId, date);
+      } catch (error) {
+        console.error(`Failed to recalculate metrics for ${date.toDateString()}:`, error);
+      }
+    }
+    
+    console.log(`✅ Successfully skipped ${days} days forward for user ${userId}`);
+  } catch (error) {
+    console.error("Failed to skip time forward:", error);
+    throw error;
+  }
+}
+
+export { generateTestMeetingData, clearFocusAndBreakData, skipTimeForward };
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -724,6 +794,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Failed to clear demo data:", error);
       res.status(500).json({ error: "Failed to clear demo data" });
+    }
+  });
+
+  // Skip time forward endpoint for demo purposes
+  app.post("/api/skip-time", async (req, res) => {
+    try {
+      const { userId, days } = req.body;
+      
+      if (!userId || !days) {
+        return res.status(400).json({ error: "User ID and days required" });
+      }
+
+      if (typeof days !== 'number' || days < 1 || days > 30) {
+        return res.status(400).json({ error: "Days must be a number between 1 and 30" });
+      }
+
+      await skipTimeForward(userId, days);
+      res.json({ success: true, message: `Skipped ${days} days forward successfully` });
+    } catch (error) {
+      console.error("Failed to skip time:", error);
+      res.status(500).json({ error: "Failed to skip time forward" });
     }
   });
 
