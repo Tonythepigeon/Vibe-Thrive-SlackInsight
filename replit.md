@@ -1,5 +1,5 @@
 # Overview
-
+this is my edit!!!!!
 This is a productivity and wellness Slack application designed to help employees optimize their work patterns through meeting analytics, proactive break suggestions, and focus mode features. The application integrates with calendar systems (Google Calendar, Microsoft Outlook) and communication tools (Slack, Microsoft Teams) to provide personalized insights and recommendations for better work-life balance.
 
 The system tracks meeting patterns, suggests intelligent breaks, generates productivity summaries, and offers focus mode functionality with calendar blocking and Slack status management. It's built as a full-stack web application with a React frontend dashboard for analytics and a Node.js backend handling integrations and data processing.
