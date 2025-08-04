@@ -20,7 +20,7 @@ Preferred communication style: Simple, everyday language.
 
 The frontend follows a component-based architecture with reusable UI components, custom hooks for mobile detection and toast notifications, and a centralized query client for API interactions.
 
-## Backend Architecture
+## Backend Architecture 
 - **Express.js** server with TypeScript
 - **Drizzle ORM** for database operations with PostgreSQL
 - **Neon Database** as the PostgreSQL provider
