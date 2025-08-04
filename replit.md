@@ -9,7 +9,7 @@ The system tracks meeting patterns, suggests intelligent breaks, generates produ
 Preferred communication style: Simple, everyday language.
 
 # System Architecture
-
+ 
 ## Frontend Architecture
 - **React 18** with TypeScript for the user interface
 - **Vite** as the build tool and development server
