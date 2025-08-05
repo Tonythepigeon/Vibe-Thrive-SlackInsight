@@ -103,9 +103,24 @@ class SlackService {
         case "/productivity":
           response = await this.handleProductivityCommand(text, user_id, team_id);
           break;
+        case "/test":
+          response = {
+            response_type: "ephemeral",
+            text: "🧪 Test command working! This is a simple response to verify slash commands are functioning correctly.",
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "🧪 *Test Command Response*\n\nIf you can see this, slash commands are working correctly!\n\n• User ID: `" + user_id + "`\n• Team ID: `" + team_id + "`\n• Text: `" + text + "`"
+                }
+              }
+            ]
+          };
+          break;
         default:
           response = {
-              text: "Unknown command. Available commands: /focus, /break, /water, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
+              text: "Unknown command. Available commands: /focus, /break, /water, /productivity, /test\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
           };
       }
 
@@ -1606,10 +1621,18 @@ class SlackService {
       ]
     });
 
-    return {
+    const response = {
       response_type: "ephemeral",
+      text: "📊 Your Productivity Summary", // Fallback text
       blocks
     };
+
+    console.log(`📊 Productivity command response for ${userId}:`);
+    console.log(`- Response type: ${response.response_type}`);
+    console.log(`- Number of blocks: ${blocks.length}`);
+    console.log(`- Block types: ${blocks.map(b => b.type).join(', ')}`);
+    
+    return response;
   }
 
   private formatTodaysMeetings(meetings: any[], timezone: string): string {
