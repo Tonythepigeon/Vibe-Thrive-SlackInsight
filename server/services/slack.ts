@@ -97,12 +97,15 @@ class SlackService {
         case "/break":
           response = await this.handleBreakCommand(text, user_id, team_id);
           break;
+        case "/water":
+          response = await this.handleWaterCommand(text, user_id, team_id);
+          break;
         case "/productivity":
           response = await this.handleProductivityCommand(text, user_id, team_id);
           break;
         default:
           response = {
-              text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
+              text: "Unknown command. Available commands: /focus, /break, /water, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
           };
       }
 
@@ -198,12 +201,15 @@ class SlackService {
         case "/break":
           response = await this.handleBreakCommand(text, user_id, team_id);
           break;
+        case "/water":
+          response = await this.handleWaterCommand(text, user_id, team_id);
+          break;
         case "/productivity":
           response = await this.handleProductivityCommand(text, user_id, team_id);
           break;
         default:
           response = {
-            text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
+            text: "Unknown command. Available commands: /focus, /break, /water, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
           };
       }
 
@@ -1097,6 +1103,177 @@ class SlackService {
     }
   }
 
+  async handleWaterCommand(text: string, userId: string, teamId: string) {
+    // Parse the input to extract action and parameters
+    const parsedInput = this.parseWaterInput(text);
+    
+    if (parsedInput.error) {
+      return {
+        response_type: "ephemeral",
+        text: `❌ ${parsedInput.error}\n\n💧 *Usage examples:*\n• \`/water\` - Log 1 glass of water\n• \`/water 3\` - Log 3 glasses\n• \`/water goal 8\` - Set daily goal to 8 glasses\n• \`/water stats\` - Show today's progress\n• \`/water remind 2h\` - Set reminders every 2 hours`
+      };
+    }
+    
+    const { action, glasses, goal, reminderInterval } = parsedInput;
+    
+    try {
+      // Set a timeout for the entire operation
+      const result = await Promise.race([
+        this.processWaterCommand(userId, teamId, action, glasses, goal, reminderInterval),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Operation timeout')), 1000)
+        )
+      ]);
+      
+      return result;
+    } catch (error) {
+      console.error("Water command error:", error);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        response_type: "ephemeral",
+        text: errorMessage === 'Operation timeout'
+          ? "💧 Processing your water tracking request..."
+          : "❌ Failed to process water request. Please try again."
+      };
+    }
+  }
+
+  // Parse water command input
+  private parseWaterInput(text: string): { 
+    action: 'log' | 'goal' | 'stats' | 'remind'; 
+    glasses?: number; 
+    goal?: number; 
+    reminderInterval?: number; 
+    error?: string 
+  } {
+    const trimmed = text.trim();
+    
+    // Handle empty input - default to logging 1 glass
+    if (!trimmed) {
+      return { action: 'log', glasses: 1 };
+    }
+    
+    const parts = trimmed.split(/\s+/);
+    
+    // Single number - log that many glasses
+    if (parts.length === 1 && /^\d+$/.test(parts[0])) {
+      const glasses = parseInt(parts[0]);
+      if (glasses < 1 || glasses > 20) {
+        return { action: 'log', error: "Please log between 1 and 20 glasses at a time" };
+      }
+      return { action: 'log', glasses };
+    }
+    
+    // Check for specific actions
+    const firstWord = parts[0].toLowerCase();
+    
+    if (firstWord === 'stats' || firstWord === 'status' || firstWord === 'progress') {
+      return { action: 'stats' };
+    }
+    
+    if (firstWord === 'goal') {
+      if (parts.length !== 2 || !/^\d+$/.test(parts[1])) {
+        return { action: 'goal', error: "Usage: /water goal [number] (e.g., /water goal 8)" };
+      }
+      const goal = parseInt(parts[1]);
+      if (goal < 1 || goal > 20) {
+        return { action: 'goal', error: "Daily goal should be between 1 and 20 glasses" };
+      }
+      return { action: 'goal', goal };
+    }
+    
+    if (firstWord === 'remind' || firstWord === 'reminder') {
+      if (parts.length !== 2) {
+        return { action: 'remind', error: "Usage: /water remind [interval] (e.g., /water remind 2h, /water remind 90m)" };
+      }
+      
+      const intervalStr = parts[1].toLowerCase();
+      let reminderInterval: number;
+      
+      // Parse interval (support h for hours, m for minutes)
+      if (intervalStr.endsWith('h')) {
+        const hours = parseInt(intervalStr.slice(0, -1));
+        if (isNaN(hours) || hours < 1 || hours > 8) {
+          return { action: 'remind', error: "Reminder interval should be between 1-8 hours" };
+        }
+        reminderInterval = hours * 60; // convert to minutes
+      } else if (intervalStr.endsWith('m')) {
+        reminderInterval = parseInt(intervalStr.slice(0, -1));
+        if (isNaN(reminderInterval) || reminderInterval < 30 || reminderInterval > 480) {
+          return { action: 'remind', error: "Reminder interval should be between 30-480 minutes" };
+        }
+      } else {
+        // Try parsing as plain number (assume minutes)
+        reminderInterval = parseInt(intervalStr);
+        if (isNaN(reminderInterval) || reminderInterval < 30 || reminderInterval > 480) {
+          return { action: 'remind', error: "Reminder interval should be between 30-480 minutes" };
+        }
+      }
+      
+      return { action: 'remind', reminderInterval };
+    }
+    
+    // If first word is a number, it might be "glasses action" format
+    if (/^\d+$/.test(firstWord)) {
+      const glasses = parseInt(firstWord);
+      if (glasses < 1 || glasses > 20) {
+        return { action: 'log', error: "Please log between 1 and 20 glasses at a time" };
+      }
+      return { action: 'log', glasses };
+    }
+    
+    // Invalid format
+    return { action: 'log', error: "Invalid command format" };
+  }
+
+  private async processWaterCommand(
+    userId: string, 
+    teamId: string, 
+    action: 'log' | 'goal' | 'stats' | 'remind',
+    glasses?: number,
+    goal?: number,
+    reminderInterval?: number
+  ) {
+    // Ensure team info is stored
+    await this.ensureTeamStored(teamId);
+
+    let user = await storage.getUserBySlackId(userId);
+    
+    // If user doesn't exist, create them automatically
+    if (!user) {
+      user = await storage.createUser({
+        slackUserId: userId,
+        slackTeamId: teamId,
+        email: `${userId}@slack.local`,
+        name: "Slack User",
+      });
+      
+      // Log activity without waiting
+      storage.logActivity({
+        userId: user.id,
+        action: "user_auto_created",
+        details: { slackUserId: userId, teamId, trigger: "water_command" }
+      }).catch(console.error);
+    }
+
+    switch (action) {
+      case 'log':
+        return await this.logWaterIntake(user.id, glasses || 1);
+      case 'goal':
+        return await this.setWaterGoal(user.id, goal!);
+      case 'stats':
+        return await this.getWaterStats(user.id);
+      case 'remind':
+        return await this.setWaterReminders(user.id, reminderInterval!);
+      default:
+        return {
+          response_type: "ephemeral",
+          text: "❌ Invalid water command action"
+        };
+    }
+  }
+
   private async processBreakCommand(userId: string, teamId: string, breakType: string, duration: number = 15, startTime: Date = new Date()) {
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
@@ -1534,6 +1711,18 @@ class SlackService {
       case "show_productivity":
         console.log("Handling show_productivity action");
         return await this.handleQuickProductivitySummary(user.id, team.id);
+      case "log_water_1":
+        console.log("Handling log_water_1 action");
+        return await this.handleWaterButton(action.value, user.id, 'log', 1);
+      case "water_stats":
+        console.log("Handling water_stats action");
+        return await this.handleWaterButton(action.value, user.id, 'stats');
+      case "water_goal_setup":
+        console.log("Handling water_goal_setup action");
+        return await this.showWaterGoalModal(action.value, user.id);
+      case "water_remind_setup":
+        console.log("Handling water_remind_setup action");
+        return await this.showWaterReminderModal(action.value, user.id);
       default:
         console.log(`Unknown action_id: ${action.action_id}`);
         return { response_action: "clear" };
@@ -2780,6 +2969,343 @@ class SlackService {
       await analyticsService.processProductivityMetrics(userId, date);
     } catch (error) {
       console.error("Failed to update daily metrics:", error);
+    }
+  }
+
+  // Water tracking methods
+  private async logWaterIntake(userId: string, glasses: number) {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Start of day
+      
+      // Log the water intake
+      await storage.logWaterIntake(userId, glasses, today);
+      
+      // Get today's progress
+      const { totalGlasses, goal, percentage } = await storage.getTodayWaterProgress(userId);
+      
+      // Log activity
+      storage.logActivity({
+        userId,
+        action: "water_logged",
+        details: { glasses, totalToday: totalGlasses, goal }
+      }).catch(console.error);
+
+      // Check if goal is reached
+      const isGoalReached = totalGlasses >= goal;
+      const progress = Math.min(percentage, 100);
+      
+      // Create progress bar
+      const progressBar = this.createProgressBar(progress);
+      
+      let celebrationText = "";
+      if (isGoalReached && totalGlasses - glasses < goal) {
+        // Just reached goal with this log
+        celebrationText = "\n\n🎉 *Congratulations! You've reached your daily water goal!* 🎉";
+      }
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `💧 *Water logged!* +${glasses} glass${glasses > 1 ? 'es' : ''}\n\n📊 *Today's Progress:*\n${progressBar} ${totalGlasses}/${goal} glasses (${Math.round(progress)}%)${celebrationText}`
+            }
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: `💡 *Tip:* Staying hydrated improves focus and energy levels!`
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Failed to log water intake:", error);
+      return {
+        response_type: "ephemeral",
+        text: "❌ Failed to log water intake. Please try again."
+      };
+    }
+  }
+
+  private async setWaterGoal(userId: string, goal: number) {
+    try {
+      await storage.setWaterGoal(userId, goal);
+      
+      // Get today's progress with new goal
+      const { totalGlasses, percentage } = await storage.getTodayWaterProgress(userId);
+      const progress = Math.min(percentage, 100);
+      const progressBar = this.createProgressBar(progress);
+      
+      // Log activity
+      storage.logActivity({
+        userId,
+        action: "water_goal_set",
+        details: { goal, currentProgress: totalGlasses }
+      }).catch(console.error);
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `🎯 *Daily water goal updated!*\n\nNew goal: ${goal} glasses per day\n\n📊 *Today's Progress:*\n${progressBar} ${totalGlasses}/${goal} glasses (${Math.round(progress)}%)`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Log Water 💧"
+                },
+                action_id: "log_water_1",
+                value: userId
+              },
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Set Reminders"
+                },
+                action_id: "water_remind_setup",
+                value: userId
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Failed to set water goal:", error);
+      return {
+        response_type: "ephemeral",
+        text: "❌ Failed to set water goal. Please try again."
+      };
+    }
+  }
+
+  private async getWaterStats(userId: string) {
+    try {
+      const { totalGlasses, goal, percentage } = await storage.getTodayWaterProgress(userId);
+      const weekStats = await storage.getWeeklyWaterStats(userId);
+      const streak = await storage.getWaterStreak(userId);
+      
+      const progress = Math.min(percentage, 100);
+      const progressBar = this.createProgressBar(progress);
+      
+      let streakText = "";
+      if (streak > 0) {
+        streakText = `\n🔥 *Current streak:* ${streak} day${streak > 1 ? 's' : ''}`;
+      }
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "header",
+            text: {
+              type: "plain_text",
+              text: "💧 Your Hydration Stats"
+            }
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `📊 *Today's Progress:*\n${progressBar} ${totalGlasses}/${goal} glasses (${Math.round(progress)}%)${streakText}`
+            }
+          },
+          {
+            type: "section",
+            fields: [
+              {
+                type: "mrkdwn",
+                text: `*This Week:*\n${weekStats.totalGlasses} glasses`
+              },
+              {
+                type: "mrkdwn",
+                text: `*Daily Average:*\n${weekStats.averagePerDay} glasses`
+              },
+              {
+                type: "mrkdwn",
+                text: `*Goals Met:*\n${weekStats.goalsMet}/${weekStats.daysTracked} days`
+              },
+              {
+                type: "mrkdwn",
+                text: `*Best Day:*\n${weekStats.maxGlasses} glasses`
+              }
+            ]
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Log Water 💧"
+                },
+                style: "primary",
+                action_id: "log_water_1",
+                value: userId
+              },
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Update Goal"
+                },
+                action_id: "water_goal_setup",
+                value: userId
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Failed to get water stats:", error);
+      return {
+        response_type: "ephemeral",
+        text: "❌ Failed to get water stats. Please try again."
+      };
+    }
+  }
+
+  private async setWaterReminders(userId: string, intervalMinutes: number) {
+    try {
+      await storage.setWaterReminders(userId, intervalMinutes);
+      
+      const intervalHours = Math.floor(intervalMinutes / 60);
+      const remainingMinutes = intervalMinutes % 60;
+      
+      let intervalText = "";
+      if (intervalHours > 0 && remainingMinutes > 0) {
+        intervalText = `${intervalHours}h ${remainingMinutes}m`;
+      } else if (intervalHours > 0) {
+        intervalText = `${intervalHours} hour${intervalHours > 1 ? 's' : ''}`;
+      } else {
+        intervalText = `${intervalMinutes} minutes`;
+      }
+      
+      // Log activity
+      storage.logActivity({
+        userId,
+        action: "water_reminders_set",
+        details: { intervalMinutes }
+      }).catch(console.error);
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `⏰ *Water reminders enabled!*\n\nI'll remind you to drink water every ${intervalText} during work hours.\n\n💡 *Tip:* You can always log water manually with \`/water\` or update your reminders anytime!`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Log Water Now 💧"
+                },
+                style: "primary",
+                action_id: "log_water_1",
+                value: userId
+              },
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "View Stats"
+                },
+                action_id: "water_stats",
+                value: userId
+              }
+            ]
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Failed to set water reminders:", error);
+      return {
+        response_type: "ephemeral",
+        text: "❌ Failed to set water reminders. Please try again."
+      };
+    }
+  }
+
+  // Create visual progress bar
+  private createProgressBar(percentage: number): string {
+    const filledBlocks = Math.floor(percentage / 10);
+    const emptyBlocks = 10 - filledBlocks;
+    return '🟦'.repeat(filledBlocks) + '⬜'.repeat(emptyBlocks);
+  }
+
+  // Handle water tracking button interactions
+  private async handleWaterButton(userId: string, slackUserId: string, action: 'log' | 'stats', glasses?: number) {
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      if (action === 'log') {
+        const result = await this.logWaterIntake(user.id, glasses || 1);
+        return {
+          replace_original: true,
+          ...result
+        };
+      } else if (action === 'stats') {
+        const result = await this.getWaterStats(user.id);
+        return {
+          replace_original: true,
+          ...result
+        };
+      }
+
+      return { response_action: "clear" };
+    } catch (error) {
+      console.error("Water button error:", error);
+      return { response_action: "clear" };
+    }
+  }
+
+  // Show modal for setting water goal (simplified version)
+  private async showWaterGoalModal(userId: string, slackUserId: string) {
+    try {
+      return {
+        replace_original: true,
+        text: "💧 To update your water goal, use the command: `/water goal [number]`\nExample: `/water goal 10` to set a goal of 10 glasses per day"
+      };
+    } catch (error) {
+      console.error("Water goal modal error:", error);
+      return { response_action: "clear" };
+    }
+  }
+
+  // Show modal for setting reminders (simplified version)
+  private async showWaterReminderModal(userId: string, slackUserId: string) {
+    try {
+      return {
+        replace_original: true,
+        text: "⏰ To set water reminders, use the command: `/water remind [interval]`\nExamples:\n• `/water remind 2h` - Every 2 hours\n• `/water remind 90m` - Every 90 minutes"
+      };
+    } catch (error) {
+      console.error("Water reminder modal error:", error);
+      return { response_action: "clear" };
     }
   }
 }

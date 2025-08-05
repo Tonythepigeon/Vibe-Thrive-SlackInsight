@@ -97,6 +97,31 @@ export const slackTeams = pgTable("slack_teams", {
   isActive: boolean("is_active").default(true),
 });
 
+export const waterIntake = pgTable("water_intake", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  glasses: integer("glasses").notNull().default(1),
+  date: timestamp("date").notNull(),
+  loggedAt: timestamp("logged_at").default(sql`now()`),
+});
+
+export const waterGoals = pgTable("water_goals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  dailyGoal: integer("daily_goal").notNull().default(8), // glasses per day
+  createdAt: timestamp("created_at").default(sql`now()`),
+  updatedAt: timestamp("updated_at").default(sql`now()`),
+});
+
+export const waterReminders = pgTable("water_reminders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  intervalMinutes: integer("interval_minutes").notNull().default(120), // 2 hours default
+  isActive: boolean("is_active").default(true),
+  lastReminderAt: timestamp("last_reminder_at"),
+  createdAt: timestamp("created_at").default(sql`now()`),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   integrations: many(integrations),
@@ -105,6 +130,9 @@ export const usersRelations = relations(users, ({ many }) => ({
   breakSuggestions: many(breakSuggestions),
   focusSessions: many(focusSessions),
   activityLogs: many(activityLogs),
+  waterIntake: many(waterIntake),
+  waterGoals: many(waterGoals),
+  waterReminders: many(waterReminders),
 }));
 
 export const integrationsRelations = relations(integrations, ({ one }) => ({
@@ -129,6 +157,18 @@ export const focusSessionsRelations = relations(focusSessions, ({ one }) => ({
 
 export const activityLogsRelations = relations(activityLogs, ({ one }) => ({
   user: one(users, { fields: [activityLogs.userId], references: [users.id] }),
+}));
+
+export const waterIntakeRelations = relations(waterIntake, ({ one }) => ({
+  user: one(users, { fields: [waterIntake.userId], references: [users.id] }),
+}));
+
+export const waterGoalsRelations = relations(waterGoals, ({ one }) => ({
+  user: one(users, { fields: [waterGoals.userId], references: [users.id] }),
+}));
+
+export const waterRemindersRelations = relations(waterReminders, ({ one }) => ({
+  user: one(users, { fields: [waterReminders.userId], references: [users.id] }),
 }));
 
 // Insert schemas
@@ -172,6 +212,22 @@ export const insertSlackTeamSchema = createInsertSchema(slackTeams).omit({
   installedAt: true,
 });
 
+export const insertWaterIntakeSchema = createInsertSchema(waterIntake).omit({
+  id: true,
+  loggedAt: true,
+});
+
+export const insertWaterGoalSchema = createInsertSchema(waterGoals).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertWaterReminderSchema = createInsertSchema(waterReminders).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -189,3 +245,9 @@ export type ActivityLog = typeof activityLogs.$inferSelect;
 export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;
 export type SlackTeam = typeof slackTeams.$inferSelect;
 export type InsertSlackTeam = z.infer<typeof insertSlackTeamSchema>;
+export type WaterIntake = typeof waterIntake.$inferSelect;
+export type InsertWaterIntake = z.infer<typeof insertWaterIntakeSchema>;
+export type WaterGoal = typeof waterGoals.$inferSelect;
+export type InsertWaterGoal = z.infer<typeof insertWaterGoalSchema>;
+export type WaterReminder = typeof waterReminders.$inferSelect;
+export type InsertWaterReminder = z.infer<typeof insertWaterReminderSchema>;

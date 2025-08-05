@@ -1,10 +1,12 @@
 import { 
   users, integrations, meetings, productivityMetrics, breakSuggestions, 
-  focusSessions, activityLogs, slackTeams,
+  focusSessions, activityLogs, slackTeams, waterIntake, waterGoals, waterReminders,
   type User, type InsertUser, type Integration, type InsertIntegration,
   type Meeting, type InsertMeeting, type ProductivityMetrics, type InsertProductivityMetrics,
   type BreakSuggestion, type InsertBreakSuggestion, type FocusSession, type InsertFocusSession,
-  type ActivityLog, type InsertActivityLog, type SlackTeam, type InsertSlackTeam
+  type ActivityLog, type InsertActivityLog, type SlackTeam, type InsertSlackTeam,
+  type WaterIntake, type InsertWaterIntake, type WaterGoal, type InsertWaterGoal,
+  type WaterReminder, type InsertWaterReminder
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
@@ -52,6 +54,20 @@ export interface IStorage {
   getSlackTeam(slackTeamId: string): Promise<SlackTeam | undefined>;
   createSlackTeam(team: InsertSlackTeam): Promise<SlackTeam>;
   updateSlackTeam(slackTeamId: string, updates: Partial<InsertSlackTeam>): Promise<SlackTeam>;
+  
+  // Water Tracking
+  logWaterIntake(userId: string, glasses: number, date: Date): Promise<WaterIntake>;
+  getTodayWaterProgress(userId: string): Promise<{ totalGlasses: number; goal: number; percentage: number }>;
+  setWaterGoal(userId: string, goal: number): Promise<WaterGoal>;
+  getWeeklyWaterStats(userId: string): Promise<{ 
+    totalGlasses: number; 
+    averagePerDay: number; 
+    goalsMet: number; 
+    daysTracked: number; 
+    maxGlasses: number 
+  }>;
+  getWaterStreak(userId: string): Promise<number>;
+  setWaterReminders(userId: string, intervalMinutes: number): Promise<WaterReminder>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -532,6 +548,188 @@ export class DatabaseStorage implements IStorage {
       return updated;
     } catch (error) {
       console.error("Failed to update meeting:", error);
+      throw error;
+    }
+  }
+
+  // Water Tracking Methods
+  async logWaterIntake(userId: string, glasses: number, date: Date): Promise<WaterIntake> {
+    try {
+      const [intake] = await this.getDb()
+        .insert(waterIntake)
+        .values({ userId, glasses, date })
+        .returning();
+      return intake;
+    } catch (error) {
+      console.error("Failed to log water intake:", error);
+      throw error;
+    }
+  }
+
+  async getTodayWaterProgress(userId: string): Promise<{ totalGlasses: number; goal: number; percentage: number }> {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+
+      // Get today's total water intake
+      const intakeResult = await this.getDb()
+        .select({ totalGlasses: sql<number>`COALESCE(SUM(${waterIntake.glasses}), 0)` })
+        .from(waterIntake)
+        .where(and(
+          eq(waterIntake.userId, userId),
+          gte(waterIntake.date, today),
+          lte(waterIntake.date, tomorrow)
+        ));
+
+      const totalGlasses = Number(intakeResult[0]?.totalGlasses || 0);
+
+      // Get user's current goal
+      const goalResult = await this.getDb()
+        .select({ dailyGoal: waterGoals.dailyGoal })
+        .from(waterGoals)
+        .where(eq(waterGoals.userId, userId))
+        .orderBy(desc(waterGoals.createdAt))
+        .limit(1);
+
+      const goal = goalResult[0]?.dailyGoal || 8; // Default to 8 glasses
+      const percentage = goal > 0 ? (totalGlasses / goal) * 100 : 0;
+
+      return { totalGlasses, goal, percentage };
+    } catch (error) {
+      console.error("Failed to get today's water progress:", error);
+      throw error;
+    }
+  }
+
+  async setWaterGoal(userId: string, goal: number): Promise<WaterGoal> {
+    try {
+      const [waterGoal] = await this.getDb()
+        .insert(waterGoals)
+        .values({ userId, dailyGoal: goal })
+        .returning();
+      return waterGoal;
+    } catch (error) {
+      console.error("Failed to set water goal:", error);
+      throw error;
+    }
+  }
+
+  async getWeeklyWaterStats(userId: string): Promise<{ 
+    totalGlasses: number; 
+    averagePerDay: number; 
+    goalsMet: number; 
+    daysTracked: number; 
+    maxGlasses: number 
+  }> {
+    try {
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      oneWeekAgo.setHours(0, 0, 0, 0);
+
+      // Get daily totals for the past week
+      const dailyTotals = await this.getDb()
+        .select({
+          date: waterIntake.date,
+          totalGlasses: sql<number>`SUM(${waterIntake.glasses})`
+        })
+        .from(waterIntake)
+        .where(and(
+          eq(waterIntake.userId, userId),
+          gte(waterIntake.date, oneWeekAgo)
+        ))
+        .groupBy(waterIntake.date)
+        .orderBy(waterIntake.date);
+
+      // Get current goal
+      const goalResult = await this.getDb()
+        .select({ dailyGoal: waterGoals.dailyGoal })
+        .from(waterGoals)
+        .where(eq(waterGoals.userId, userId))
+        .orderBy(desc(waterGoals.createdAt))
+        .limit(1);
+
+      const dailyGoal = goalResult[0]?.dailyGoal || 8;
+
+      const totalGlasses = dailyTotals.reduce((sum, day) => sum + Number(day.totalGlasses), 0);
+      const daysTracked = dailyTotals.length;
+      const averagePerDay = daysTracked > 0 ? Math.round(totalGlasses / daysTracked) : 0;
+      const goalsMet = dailyTotals.filter(day => Number(day.totalGlasses) >= dailyGoal).length;
+      const maxGlasses = dailyTotals.length > 0 ? 
+        Math.max(...dailyTotals.map(day => Number(day.totalGlasses))) : 0;
+
+      return { totalGlasses, averagePerDay, goalsMet, daysTracked, maxGlasses };
+    } catch (error) {
+      console.error("Failed to get weekly water stats:", error);
+      throw error;
+    }
+  }
+
+  async getWaterStreak(userId: string): Promise<number> {
+    try {
+      // Get current goal
+      const goalResult = await this.getDb()
+        .select({ dailyGoal: waterGoals.dailyGoal })
+        .from(waterGoals)
+        .where(eq(waterGoals.userId, userId))
+        .orderBy(desc(waterGoals.createdAt))
+        .limit(1);
+
+      const dailyGoal = goalResult[0]?.dailyGoal || 8;
+
+      // Get daily totals for the past 30 days (enough to calculate streaks)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+      const dailyTotals = await this.getDb()
+        .select({
+          date: waterIntake.date,
+          totalGlasses: sql<number>`SUM(${waterIntake.glasses})`
+        })
+        .from(waterIntake)
+        .where(and(
+          eq(waterIntake.userId, userId),
+          gte(waterIntake.date, thirtyDaysAgo)
+        ))
+        .groupBy(waterIntake.date)
+        .orderBy(desc(waterIntake.date));
+
+      // Calculate current streak
+      let streak = 0;
+      for (const day of dailyTotals) {
+        if (Number(day.totalGlasses) >= dailyGoal) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+
+      return streak;
+    } catch (error) {
+      console.error("Failed to get water streak:", error);
+      throw error;
+    }
+  }
+
+  async setWaterReminders(userId: string, intervalMinutes: number): Promise<WaterReminder> {
+    try {
+      // First, deactivate any existing reminders
+      await this.getDb()
+        .update(waterReminders)
+        .set({ isActive: false })
+        .where(eq(waterReminders.userId, userId));
+
+      // Create new reminder
+      const [reminder] = await this.getDb()
+        .insert(waterReminders)
+        .values({ userId, intervalMinutes, isActive: true })
+        .returning();
+      
+      return reminder;
+    } catch (error) {
+      console.error("Failed to set water reminders:", error);
       throw error;
     }
   }

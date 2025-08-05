@@ -482,7 +482,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           <strong>/focus 2:30pm 45</strong> - Schedule a 45-minute session for 2:30 PM<br>
           <strong>/break 15</strong> - Take a 15-minute break now<br>
           <strong>/break 2:30pm 20 coffee</strong> - Schedule a 20-minute coffee break for 2:30 PM<br>
-          <strong>/break lunch</strong> - Take a proper lunch break<br>
+          <strong>/water</strong> - Log a glass of water<br>
+          <strong>/water goal 8</strong> - Set your daily hydration goal<br>
           <strong>/productivity</strong> - View your productivity metrics</p>
           
           <a href="slack://open" class="cta">Return to Slack</a>
