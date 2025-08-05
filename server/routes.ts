@@ -582,6 +582,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         botId: authTest.bot_id,
         userId: authTest.user_id,
         team: authTest.team,
+        teamId: authTest.team_id,
         tokenType: envToken ? "environment" : "database",
         timestamp: new Date().toISOString()
       });
@@ -593,6 +594,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
         slack: "failed", 
         error: errorMessage,
         tokenExists: !!process.env.SLACK_BOT_TOKEN,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Check database tokens for specific team
+  app.get("/api/health/slack/:teamId", async (req, res) => {
+    try {
+      const { teamId } = req.params;
+      console.log(`🔍 Checking database token for team: ${teamId}`);
+      
+      // Check if team exists in database
+      const team = await storage.getSlackTeam(teamId);
+      console.log(`🏢 Database team record:`, team ? {
+        teamId: team.slackTeamId,
+        teamName: team.teamName,
+        hasBot: !!team.botToken,
+        botTokenPrefix: team.botToken ? team.botToken.substring(0, 10) + '...' : 'none',
+        installedAt: team.installedAt
+      } : 'not found');
+
+      // Test the token that would actually be used
+      const { slackService } = await import('./services/slack');
+      const testClient = await (slackService as any).getClient(teamId);
+      
+      console.log(`🧪 Testing actual token that would be used for team ${teamId}...`);
+      const authTest = await testClient.auth.test();
+      console.log("✅ Team-specific auth test successful:", authTest);
+      
+      res.json({
+        status: "ok",
+        teamId,
+        databaseRecord: !!team,
+        databaseToken: !!team?.botToken,
+        tokenPrefix: team?.botToken ? team.botToken.substring(0, 10) + '...' : null,
+        authTest: {
+          botId: authTest.bot_id,
+          userId: authTest.user_id,
+          team: authTest.team,
+          teamId: authTest.team_id
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error(`❌ Team ${req.params.teamId} token check failed:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        status: "error",
+        teamId: req.params.teamId,
+        error: errorMessage,
         timestamp: new Date().toISOString()
       });
     }
