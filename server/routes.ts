@@ -295,10 +295,21 @@ async function clearFocusAndBreakData(userId: string) {
   }
 }
 
-// Skip time forward for demo purposes
+// Skip time forward/backward for demo purposes
 async function skipTimeForward(userId: string, days: number) {
-  const timeUnit = days >= 1 ? `${days} days` : `${Math.round(days * 24)} hours`;
-  console.log(`Skipping ${timeUnit} forward for user ${userId}`);
+  const absDays = Math.abs(days);
+  const direction = days >= 0 ? 'forward' : 'backward';
+  
+  let timeUnit: string;
+  if (absDays >= 1) {
+    timeUnit = `${absDays} days`;
+  } else if (absDays >= 1/24) {
+    timeUnit = `${Math.round(absDays * 24)} hours`;
+  } else {
+    timeUnit = `${Math.round(absDays * 24 * 60)} minutes`;
+  }
+  
+  console.log(`Skipping ${timeUnit} ${direction} for user ${userId}`);
   
   try {
     // Move all meetings forward by the specified number of days
@@ -359,9 +370,9 @@ async function skipTimeForward(userId: string, days: number) {
       }
     }
     
-    console.log(`✅ Successfully skipped ${timeUnit} forward for user ${userId}`);
+    console.log(`✅ Successfully skipped ${timeUnit} ${direction} for user ${userId}`);
   } catch (error) {
-    console.error("Failed to skip time forward:", error);
+    console.error(`Failed to skip time ${direction}:`, error);
     throw error;
   }
 }
@@ -851,12 +862,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "User ID and days required" });
       }
 
-      if (typeof days !== 'number' || days < 0.04 || days > 30) {
-        return res.status(400).json({ error: "Days must be a number between 0.04 (1 hour) and 30" });
+      if (typeof days !== 'number' || Math.abs(days) < 0.0007 || Math.abs(days) > 30) {
+        return res.status(400).json({ error: "Days must be a number between ±0.0007 (1 minute) and ±30" });
       }
 
       await skipTimeForward(userId, days);
-      res.json({ success: true, message: `Skipped ${days} days forward successfully` });
+      const direction = days >= 0 ? 'forward' : 'backward';
+      const absDays = Math.abs(days);
+      let timeUnit: string;
+      if (absDays >= 1) {
+        timeUnit = `${absDays} days`;
+      } else if (absDays >= 1/24) {
+        timeUnit = `${Math.round(absDays * 24)} hours`;  
+      } else {
+        timeUnit = `${Math.round(absDays * 24 * 60)} minutes`;
+      }
+      res.json({ success: true, message: `Skipped ${timeUnit} ${direction} successfully` });
     } catch (error) {
       console.error("Failed to skip time:", error);
       res.status(500).json({ error: "Failed to skip time forward" });

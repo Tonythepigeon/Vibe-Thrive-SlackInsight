@@ -32,6 +32,9 @@ interface DashboardData {
 export default function Dashboard() {
   const [userId, setUserId] = useState<string | null>(null);
   const [showTestDataButton, setShowTestDataButton] = useState(false);
+  const [timeDirection, setTimeDirection] = useState<'+' | '-'>('+');
+  const [timeAmount, setTimeAmount] = useState<number>(2);
+  const [timeUnit, setTimeUnit] = useState<'minutes' | 'hours' | 'days'>('hours');
 
   // Extract user ID from URL or get from localStorage/context
   useEffect(() => {
@@ -93,10 +96,24 @@ export default function Dashboard() {
     }
   };
 
-  const skipTimeForward = async (days: number) => {
-    if (!userId) return;
+  const skipTime = async () => {
+    if (!userId || !timeAmount) return;
     
     try {
+      let days = timeAmount;
+      
+      // Convert to days based on unit
+      if (timeUnit === 'minutes') {
+        days = timeAmount / (24 * 60);
+      } else if (timeUnit === 'hours') {
+        days = timeAmount / 24;
+      }
+      
+      // Apply direction
+      if (timeDirection === '-') {
+        days = -days;
+      }
+      
       const response = await fetch("/api/skip-time", {
         method: "POST",
         headers: {
@@ -267,44 +284,47 @@ export default function Dashboard() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Button onClick={() => skipTimeForward(1/24)} variant="outline" size="sm">
-              +1 Hour
-            </Button>
-            <Button onClick={() => skipTimeForward(2/24)} variant="outline" size="sm">
-              +2 Hours
-            </Button>
-            <Button onClick={() => skipTimeForward(4/24)} variant="outline" size="sm">
-              +4 Hours
-            </Button>
-            <Button onClick={() => skipTimeForward(8/24)} variant="outline" size="sm">
-              +8 Hours
-            </Button>
-            <Button onClick={() => skipTimeForward(1)} variant="outline" size="sm">
-              +1 Day
-            </Button>
-            <Button onClick={() => skipTimeForward(3)} variant="outline" size="sm">
-              +3 Days
-            </Button>
-            <Button onClick={() => skipTimeForward(7)} variant="outline" size="sm">
-              +1 Week
-            </Button>
-            <Button onClick={() => skipTimeForward(14)} variant="outline" size="sm">
-              +2 Weeks
+          <div className="flex items-center gap-3 mb-4">
+            <select 
+              value={timeDirection} 
+              onChange={(e) => setTimeDirection(e.target.value as '+' | '-')}
+              className="px-3 py-2 border rounded-md"
+            >
+              <option value="+">+</option>
+              <option value="-">-</option>
+            </select>
+            
+            <input
+              type="number"
+              value={timeAmount}
+              onChange={(e) => setTimeAmount(Number(e.target.value))}
+              min="1"
+              max="999"
+              className="px-3 py-2 border rounded-md w-20"
+            />
+            
+            <select 
+              value={timeUnit} 
+              onChange={(e) => setTimeUnit(e.target.value as 'minutes' | 'hours' | 'days')}
+              className="px-3 py-2 border rounded-md"
+            >
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+            </select>
+            
+            <Button onClick={skipTime} variant="outline">
+              ⏰ Skip Time
             </Button>
           </div>
-          <div className="mt-4 flex items-center justify-between">
+          
+          <div className="flex items-center justify-between">
             <Button onClick={startBreakMonitoring} className="bg-green-600 hover:bg-green-700">
               🔔 Start Break Monitoring
             </Button>
             <div className="text-sm text-gray-600">
               Enables 2-hour break alerts
             </div>
-          </div>
-          <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-            <p className="text-sm text-blue-700">
-              💡 <strong>Demo Tip:</strong> Start monitoring, then skip forward 2-4 hours to trigger break alerts. Skip 1+ days to see productivity patterns.
-            </p>
           </div>
         </CardContent>
       </Card>
