@@ -649,6 +649,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Clear invalid database token for a team (forces fallback to environment token)
+  app.delete("/api/slack/team/:teamId", async (req, res) => {
+    try {
+      const { teamId } = req.params;
+      console.log(`🗑️ Clearing database token for team: ${teamId}`);
+      
+      // Clear the team's bot token (but keep the team record)
+      const team = await storage.getSlackTeam(teamId);
+      if (team) {
+        await storage.updateSlackTeam(teamId, { 
+          botToken: null,
+          botUserId: null 
+        });
+        console.log(`✅ Cleared bot token for team ${teamId}`);
+        
+        // Clear the cached client so it will use environment token
+        const { slackService } = await import('./services/slack');
+        (slackService as any).clients.delete(teamId);
+        console.log(`🔄 Cleared cached client for team ${teamId}`);
+        
+        res.json({
+          status: "success",
+          message: `Cleared invalid database token for team ${teamId}. Will now use environment token.`,
+          teamId,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        res.status(404).json({
+          status: "error",
+          message: `Team ${teamId} not found in database`,
+          teamId,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error(`❌ Failed to clear token for team ${req.params.teamId}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        status: "error",
+        message: `Failed to clear token: ${errorMessage}`,
+        teamId: req.params.teamId,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Slack App endpoints - Fix context binding by using arrow functions
   app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
   app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
