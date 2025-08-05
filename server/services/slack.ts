@@ -493,6 +493,7 @@ class SlackService {
       const botScopes = [
         'commands',
         'chat:write',
+        'im:write',
         'users:read',
         'team:read'
       ].join(',');
