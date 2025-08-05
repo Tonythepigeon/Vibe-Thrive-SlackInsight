@@ -7,7 +7,7 @@ import { slackService } from "./slack";
 import { storage } from "../storage";
 
 interface CommandIntent {
-  action: 'focus' | 'break' | 'productivity' | 'unsupported';
+  action: 'focus' | 'break' | 'productivity' | 'greeting' | 'unsupported';
   parameters?: {
     duration?: number;
     breakType?: string;
@@ -46,21 +46,24 @@ class AIService {
     const systemPrompt = `You are a productivity assistant that interprets user requests and maps them to specific Slack commands.
 
 Available commands:
-1. FOCUS: Start or end focus sessions (duration in minutes)
+1. GREETING: Detect greetings and introductions
+   - Examples: "hi", "hello", "hey", "good morning", "good afternoon", "how are you"
+   
+2. FOCUS: Start or end focus sessions (duration in minutes)
    - Examples: "start focus for 30 minutes", "end my focus session", "I need to concentrate"
    
-2. BREAK: Suggest or manage breaks (type: general, hydration, stretch, meditation, walk)
+3. BREAK: Suggest or manage breaks (type: general, hydration, stretch, meditation, walk)
    - Examples: "suggest a break", "I need a coffee break", "time for a stretch"
    
-3. PRODUCTIVITY: Show productivity metrics and summaries
+4. PRODUCTIVITY: Show productivity metrics and summaries
    - Examples: "show my productivity", "how productive was I today?", "meeting summary"
 
-4. UNSUPPORTED: Any request not related to these productivity features
+5. UNSUPPORTED: Any request not related to these productivity features
    - Examples: "what's the weather?", "tell me a joke", "book a meeting"
 
 Respond ONLY with a JSON object in this exact format:
 {
-  "action": "focus|break|productivity|unsupported",
+  "action": "greeting|focus|break|productivity|unsupported",
   "parameters": {
     "duration": 25,
     "breakType": "general"
@@ -69,6 +72,7 @@ Respond ONLY with a JSON object in this exact format:
 }
 
 Rules:
+- Use "greeting" for any form of hello, hi, hey, or general greetings
 - Use "focus" for concentration/work session requests
 - Use "break" for rest/pause requests
 - Use "productivity" for metrics/summary requests
@@ -78,12 +82,10 @@ Rules:
 - Confidence should be 0.8+ for supported actions, lower for unsupported`;
 
     return RunnableSequence.from([
-      {
-        messages: (input: { userMessage: string }) => [
-          new SystemMessage(systemPrompt),
-          new HumanMessage(input.userMessage)
-        ]
-      },
+      (input: { userMessage: string }) => [
+        new SystemMessage(systemPrompt),
+        new HumanMessage(input.userMessage)
+      ],
       this.llm,
       new StringOutputParser()
     ]);
@@ -160,6 +162,8 @@ Rules:
   ): Promise<any> {
     try {
       switch (intent.action) {
+        case 'greeting':
+          return await this.executeGreetingCommand(intent, userId, teamId);
         case 'focus':
           return await this.executeFocusCommand(intent, userId, teamId);
         case 'break':
@@ -173,6 +177,16 @@ Rules:
       console.error(`Command execution error for ${intent.action}:`, error);
       throw error;
     }
+  }
+
+  private async executeGreetingCommand(intent: CommandIntent, userId: string, teamId: string) {
+    // For greetings, we don't need to execute any Slack commands
+    // Just return a success indicator so the AI can generate a proper greeting response
+    return {
+      success: true,
+      type: 'greeting',
+      timestamp: new Date().toISOString()
+    };
   }
 
   private async executeFocusCommand(intent: CommandIntent, userId: string, teamId: string) {
@@ -231,7 +245,21 @@ Rules:
     originalMessage: string
   ): Promise<AIResponse> {
     try {
-      const responsePrompt = `Based on this user request and command execution, generate a helpful, friendly response.
+      let responsePrompt: string;
+      
+      if (intent.action === 'greeting') {
+        responsePrompt = `The user sent a greeting: "${originalMessage}"
+
+Generate a warm, friendly greeting response that:
+1. Responds to their greeting appropriately
+2. Introduces yourself as a productivity assistant
+3. Briefly explains your main capabilities (focus sessions, breaks, productivity tracking)
+4. Invites them to try your features
+5. Is encouraging and welcoming
+
+Keep it friendly and concise. Make them feel welcome!`;
+      } else {
+        responsePrompt = `Based on this user request and command execution, generate a helpful, friendly response.
 
 User's original message: "${originalMessage}"
 Command executed: ${intent.action}
@@ -244,6 +272,7 @@ Generate a response that:
 4. Is warm, encouraging, and supportive
 
 Keep it concise but helpful. Focus on productivity and wellness benefits.`;
+      }
 
       const response = await this.llm.invoke([
         new SystemMessage("You are a friendly productivity assistant helping users with focus and wellness."),
@@ -263,6 +292,7 @@ Keep it concise but helpful. Focus on productivity and wellness benefits.`;
       
       // Fallback response
       const fallbackMessages = {
+        greeting: "Hello! I'm your productivity assistant. I can help you with focus sessions, breaks, and productivity tracking. How can I assist you today?",
         focus: "I've started your focus session! Remember to eliminate distractions and set clear goals for maximum productivity.",
         break: "Time for a well-deserved break! Stepping away helps maintain your energy and creativity throughout the day.",
         productivity: "Here's your productivity summary! Regular tracking helps you understand your work patterns and optimize your schedule.",
@@ -282,6 +312,14 @@ Keep it concise but helpful. Focus on productivity and wellness benefits.`;
 
     try {
       switch (intent.action) {
+        case 'greeting':
+          recommendations.push(
+            "Try `/focus 25` to start a 25-minute focus session",
+            "Use `/break` to get break suggestions when you need a rest",
+            "Check `/productivity` to see your daily productivity metrics"
+          );
+          break;
+          
         case 'focus':
           recommendations.push(
             "Try the Pomodoro Technique: 25 minutes focused work, 5 minute break",
