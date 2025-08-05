@@ -3804,8 +3804,9 @@ class SlackService {
     const hour = date.getHours();
     const day = date.getDay();
     
-    // Monday-Friday, 8 AM - 6 PM
-    return day >= 1 && day <= 5 && hour >= 8 && hour <= 18;
+    // Monday-Friday, 6 AM - 11 PM (expanded for demo purposes)
+    // This allows break suggestions throughout most of the day for demo
+    return day >= 1 && day <= 5 && hour >= 6 && hour <= 23;
   }
 
   // Proactive Break Button Handlers
