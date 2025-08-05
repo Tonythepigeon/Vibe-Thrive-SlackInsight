@@ -183,6 +183,31 @@ export default function Dashboard() {
     }
   };
 
+  const testBreakCheck = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch("/api/test-break-check", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId }),
+      });
+      
+      if (response.ok) {
+        alert("✅ Break check completed! Check server logs and Slack for results.");
+        console.log("Break check test completed successfully");
+      } else {
+        const error = await response.json();
+        alert(`❌ Failed to test break check: ${error.error}`);
+      }
+    } catch (error) {
+      console.error("Failed to test break check:", error);
+      alert("❌ Failed to test break check. Check console for details.");
+    }
+  };
+
   const formatTime = (dateString: string, timezone: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
       timeZone: timezone,
@@ -374,9 +399,14 @@ export default function Dashboard() {
           </div>
           
           <div className="flex items-center justify-between">
-            <Button onClick={startBreakMonitoring} className="bg-green-600 hover:bg-green-700">
-              🔔 Start Break Monitoring
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={startBreakMonitoring} className="bg-green-600 hover:bg-green-700">
+                🔔 Start Break Monitoring
+              </Button>
+              <Button onClick={testBreakCheck} variant="outline" className="border-blue-500 text-blue-600 hover:bg-blue-50">
+                🧪 Test Break Check
+              </Button>
+            </div>
             <div className="text-sm text-gray-600">
               Enables 2-hour break alerts
             </div>

@@ -381,6 +381,7 @@ async function skipTimeForward(userId: string, days: number) {
     
     // Trigger immediate break check after time skip
     try {
+      console.log(`🔄 Triggering break check for userId: ${userId} after time skip`);
       const { slackService } = await import('./services/slack');
       await slackService.checkBreakAfterTimeSkip(userId);
     } catch (breakError) {
@@ -995,6 +996,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "User ID required" });
       }
 
+      console.log(`🔔 Starting break monitoring for userId: ${userId}`);
       const { slackService } = await import('./services/slack');
       await slackService.startProactiveBreakMonitoring(userId);
       
@@ -1002,6 +1004,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Failed to start break monitoring:", error);
       res.status(500).json({ error: "Failed to start break monitoring" });
+    }
+  });
+
+  // Test break check endpoint (for debugging)
+  app.post("/api/test-break-check", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID required" });
+      }
+
+      console.log(`🧪 Manual break check test for userId: ${userId}`);
+      const { slackService } = await import('./services/slack');
+      await slackService.checkBreakAfterTimeSkip(userId);
+      
+      res.json({ success: true, message: "Break check completed - check server logs for details" });
+    } catch (error) {
+      console.error("Failed to test break check:", error);
+      res.status(500).json({ error: "Failed to test break check" });
     }
   });
 

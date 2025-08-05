@@ -3350,44 +3350,57 @@ class SlackService {
   // Check for breaks immediately after time skip (for demo purposes)
   async checkBreakAfterTimeSkip(userId: string) {
     try {
-      console.log(`Checking for immediate break suggestions after time skip for user ${userId}`);
+      console.log(`🔍 Checking for immediate break suggestions after time skip for user ${userId}`);
       
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) {
-        console.log(`Cannot check breaks for user ${userId} - no Slack user ID`);
+        console.log(`❌ Cannot check breaks for user ${userId} - no user found or no Slack user ID`);
+        console.log(`User data:`, user);
         return;
       }
 
+      console.log(`✅ Found user: ${user.name} (${user.slackUserId})`);
+
       // Get demo time instead of real time
       const demoTime = await this.getDemoTimeForUser(userId);
-      console.log(`Using demo time for break check: ${demoTime.toISOString()}`);
+      console.log(`⏰ Using demo time for break check: ${demoTime.toISOString()}`);
       
       const workingHours = this.isWorkingHours(demoTime);
       if (!workingHours) {
-        console.log(`Skipping break check for ${userId} - outside working hours (demo time)`);
+        console.log(`🚫 Skipping break check for ${userId} - outside working hours (demo time: ${demoTime.getHours()}:${demoTime.getMinutes()})`);
         return;
       }
+
+      console.log(`✅ Within working hours (${demoTime.getHours()}:${demoTime.getMinutes()})`);
 
       // Check if user needs a break using demo time
       const breakNeeded = await this.analyzeBreakNeedWithDemoTime(userId, demoTime);
       if (!breakNeeded.needed) {
-        console.log(`No break needed for ${userId}: ${breakNeeded.reason}`);
+        console.log(`⏸️ No break needed for ${userId}: ${breakNeeded.reason}`);
         return;
       }
+
+      console.log(`🎯 Break needed for ${userId}: ${breakNeeded.reason} (type: ${breakNeeded.type}, urgency: ${breakNeeded.urgency})`);
 
       // Check for meeting conflicts using demo time
       const meetingConflict = await this.checkMeetingConflictsWithDemoTime(userId, demoTime);
       if (meetingConflict.hasConflict) {
-        console.log(`Break suggestion delayed for ${userId}: ${meetingConflict.reason}`);
+        console.log(`⏰ Break suggestion delayed for ${userId}: ${meetingConflict.reason}`);
         return; // Don't schedule delayed for demo - just skip
       }
 
+      console.log(`✅ No meeting conflicts, proceeding with break alert`);
+
       // Send proactive break alert immediately
-      console.log(`Sending immediate break alert for ${userId}: ${breakNeeded.reason}`);
+      console.log(`📱 Sending immediate break alert for ${userId}: ${breakNeeded.reason}`);
       await this.sendProactiveBreakAlert(userId, breakNeeded);
+      console.log(`✅ Break alert sent successfully to ${user.slackUserId}`);
       
     } catch (error) {
-      console.error("Error in immediate break check after time skip:", error);
+      console.error("❌ Error in immediate break check after time skip:", error);
+      if (error instanceof Error) {
+        console.error("Stack trace:", error.stack);
+      }
     }
   }
 
@@ -3657,21 +3670,35 @@ class SlackService {
 
   private async sendProactiveBreakAlert(userId: string, breakInfo: {reason: string, type: string, urgency: 'low' | 'medium' | 'high'}) {
     try {
+      console.log(`📤 Attempting to send proactive break alert to user ${userId}`);
+      
       const user = await storage.getUser(userId);
-      if (!user || !user.slackUserId) return;
+      if (!user || !user.slackUserId) {
+        console.log(`❌ No user or Slack user ID found for ${userId}`);
+        return;
+      }
+
+      console.log(`✅ Found user for break alert: ${user.name} (${user.slackUserId})`);
 
       const client = await this.getUserClient(user.id);
       if (!client) {
-        console.log(`No user client available for ${userId}, falling back to bot`);
+        console.log(`⚠️ No user client available for ${userId}, falling back to bot`);
         const botClient = await this.getClient(user.slackTeamId || undefined);
-        if (!botClient) return;
+        if (!botClient) {
+          console.log(`❌ No bot client available either for team ${user.slackTeamId}`);
+          return;
+        }
         
+        console.log(`📱 Sending simple break message via bot client to ${user.slackUserId}`);
         await botClient.chat.postMessage({
           channel: user.slackUserId,
           text: `💡 *Break Time Suggestion*\n\n${this.getBreakMessage(breakInfo.type)}\n\n${breakInfo.reason}\n\nUse \`/break\` when you're ready!`
         });
+        console.log(`✅ Simple break message sent successfully`);
         return;
       }
+
+      console.log(`✅ User client available, sending interactive break alert`);
 
       const urgencyIcon = {
         low: '💡',
@@ -3752,6 +3779,8 @@ class SlackService {
         ]
       });
 
+      console.log(`✅ Interactive break alert sent successfully to ${user.slackUserId}`);
+
       // Log the proactive suggestion
       await storage.logActivity({
         userId,
@@ -3764,7 +3793,10 @@ class SlackService {
       });
 
     } catch (error) {
-      console.error("Failed to send proactive break alert:", error);
+      console.error("❌ Failed to send proactive break alert:", error);
+      if (error instanceof Error) {
+        console.error("Stack trace:", error.stack);
+      }
     }
   }
 
