@@ -81,7 +81,19 @@ class SlackService {
     try {
       const { command, text, user_id, team_id, channel_id } = req.body;
 
+      console.log(`🔧 Slash command received: ${command} from user ${user_id} in team ${team_id}`);
+      console.log(`📝 Command text: "${text}"`);
+      console.log(`📋 Request headers:`, req.headers);
+
       // Verify request is from Slack (in production, verify signing secret)
+      const slackSignature = req.headers['x-slack-signature'];
+      const slackTimestamp = req.headers['x-slack-request-timestamp'];
+      
+      if (!slackSignature || !slackTimestamp) {
+        console.log(`⚠️ Missing Slack signature headers`);
+      } else {
+        console.log(`✅ Slack signature headers present`);
+      }
       
       // Send immediate acknowledgment for simple commands to prevent timeouts
       const isSimpleCommand = this.isSimpleCommand(command, text);
@@ -105,17 +117,7 @@ class SlackService {
           break;
         case "/test":
           response = {
-            response_type: "ephemeral",
-            text: "🧪 Test command working! This is a simple response to verify slash commands are functioning correctly.",
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: "🧪 *Test Command Response*\n\nIf you can see this, slash commands are working correctly!\n\n• User ID: `" + user_id + "`\n• Team ID: `" + team_id + "`\n• Text: `" + text + "`"
-                }
-              }
-            ]
+            text: "🧪 Test command working! User: " + user_id + ", Team: " + team_id + ", Text: '" + text + "'"
           };
           break;
         default:
@@ -124,6 +126,7 @@ class SlackService {
           };
       }
 
+      console.log(`🔍 Sending response for ${command}:`, JSON.stringify(response, null, 2));
       res.json(response);
         return;
       }
