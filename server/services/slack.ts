@@ -1471,6 +1471,9 @@ class SlackService {
       }).catch(console.error);
     }
 
+    // Start proactive break monitoring for this user
+    this.startProactiveBreakMonitoring(user.id).catch(console.error);
+
     const today = new Date();
     const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
     
@@ -1687,6 +1690,18 @@ class SlackService {
       case "generate_demo_data":
         console.log("Handling generate_demo_data action");
         return await this.generateDemoDataFromSlack(action.value, user.id);
+      case "proactive_break_now":
+        console.log("Handling proactive_break_now action");
+        return await this.handleProactiveBreakNow(action.value, user.id);
+      case "proactive_break_delay_30":
+        console.log("Handling proactive_break_delay_30 action");
+        return await this.handleProactiveBreakDelay(action.value, user.id, 30);
+      case "proactive_break_delay_60":
+        console.log("Handling proactive_break_delay_60 action");
+        return await this.handleProactiveBreakDelay(action.value, user.id, 60);
+      case "proactive_break_dismiss":
+        console.log("Handling proactive_break_dismiss action");
+        return await this.handleProactiveBreakDismiss(action.value, user.id);
       case "cancel_scheduled_focus":
         console.log("Handling cancel_scheduled_focus action");
         return await this.cancelScheduledFocusSession(action.value, user.id);
@@ -3306,6 +3321,448 @@ class SlackService {
     } catch (error) {
       console.error("Water reminder modal error:", error);
       return { response_action: "clear" };
+    }
+  }
+
+  // Proactive Break Monitoring System
+  async startProactiveBreakMonitoring(userId: string) {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) {
+        console.log(`Cannot start break monitoring for user ${userId} - no Slack user ID`);
+        return;
+      }
+
+      // Check if user wants break monitoring (could be a user preference)
+      const shouldMonitor = await this.shouldMonitorBreaksForUser(userId);
+      if (!shouldMonitor) {
+        return;
+      }
+
+      // Start monitoring with intelligent timing
+      this.scheduleNextBreakCheck(userId);
+      console.log(`Started proactive break monitoring for user ${userId}`);
+    } catch (error) {
+      console.error("Failed to start break monitoring:", error);
+    }
+  }
+
+  private async shouldMonitorBreaksForUser(userId: string): Promise<boolean> {
+    // Check if user has had recent activity (meetings, focus sessions, etc.)
+    const today = new Date();
+    const meetings = await storage.getMeetingsByDate(userId, today);
+    const focusSessions = await storage.getFocusSessionsByDate(userId, today);
+    
+    // Only monitor if user is actively using the productivity features
+    return meetings.length > 0 || focusSessions.length > 0;
+  }
+
+  private scheduleNextBreakCheck(userId: string) {
+    // Check every 30 minutes for break opportunities
+    setTimeout(async () => {
+      await this.checkForProactiveBreakSuggestion(userId);
+      // Schedule the next check
+      this.scheduleNextBreakCheck(userId);
+    }, 30 * 60 * 1000); // 30 minutes
+  }
+
+  private async checkForProactiveBreakSuggestion(userId: string) {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user) return;
+
+      const now = new Date();
+      const workingHours = this.isWorkingHours(now);
+      
+      if (!workingHours) {
+        console.log(`Skipping break check for ${userId} - outside working hours`);
+        return;
+      }
+
+      // Check if user needs a break
+      const breakNeeded = await this.analyzeBreakNeed(userId, now);
+      if (!breakNeeded.needed) {
+        console.log(`No break needed for ${userId}: ${breakNeeded.reason}`);
+        return;
+      }
+
+      // Check for meeting conflicts
+      const meetingConflict = await this.checkMeetingConflicts(userId, now);
+      if (meetingConflict.hasConflict) {
+        console.log(`Break suggestion delayed for ${userId}: ${meetingConflict.reason}`);
+        
+        // Schedule suggestion for after the conflict
+        if (meetingConflict.suggestAfter) {
+          this.scheduleDelayedBreakSuggestion(userId, meetingConflict.suggestAfter);
+        }
+        return;
+      }
+
+      // Send proactive break alert
+      await this.sendProactiveBreakAlert(userId, breakNeeded);
+      
+    } catch (error) {
+      console.error("Error in proactive break check:", error);
+    }
+  }
+
+  private async analyzeBreakNeed(userId: string, now: Date): Promise<{needed: boolean, reason: string, type: string, urgency: 'low' | 'medium' | 'high'}> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get today's activity
+    const meetings = await storage.getMeetingsByDate(userId, today);
+    const focusSessions = await storage.getFocusSessionsByDate(userId, today);
+    const recentBreaks = await storage.getRecentBreakSuggestions(userId, 24);
+    
+    const todaysBreaks = recentBreaks.filter(b => 
+      b.accepted && b.acceptedAt && new Date(b.acceptedAt).toDateString() === today.toDateString()
+    );
+
+    // Calculate time since last break
+    const lastBreak = todaysBreaks[0];
+    const hoursSinceLastBreak = lastBreak && lastBreak.acceptedAt
+      ? (now.getTime() - new Date(lastBreak.acceptedAt).getTime()) / (1000 * 60 * 60)
+      : 24; // If no breaks today, assume it's been a while
+
+    // Check current meeting situation
+    const currentMeetings = meetings.filter(m => {
+      const start = new Date(m.startTime);
+      const end = new Date(m.endTime);
+      return start <= now && end >= now;
+    });
+
+    const inMeeting = currentMeetings.length > 0;
+
+    // Calculate meeting intensity today
+    const totalMeetingTime = meetings.reduce((sum, m) => sum + (m.duration || 0), 0);
+    const meetingHours = totalMeetingTime / 60;
+
+    // Check focus session activity
+    const activeFocus = await storage.getActiveFocusSession(userId);
+    const totalFocusTime = focusSessions.reduce((sum, s) => sum + (s.duration || 0), 0);
+
+    // Break need analysis
+    if (hoursSinceLastBreak >= 3 && meetingHours >= 2) {
+      return {
+        needed: true,
+        reason: `${meetingHours.toFixed(1)} hours of meetings today, ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
+        type: 'stretch',
+        urgency: 'high'
+      };
+    }
+
+    if (hoursSinceLastBreak >= 2 && (activeFocus || totalFocusTime >= 90)) {
+      return {
+        needed: true,
+        reason: `Extended focus time, ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
+        type: 'hydration',
+        urgency: 'medium'
+      };
+    }
+
+    if (hoursSinceLastBreak >= 4) {
+      return {
+        needed: true,
+        reason: `${hoursSinceLastBreak.toFixed(1)} hours since last break`,
+        type: 'walk',
+        urgency: 'medium'
+      };
+    }
+
+    if (todaysBreaks.length === 0 && now.getHours() >= 14) {
+      return {
+        needed: true,
+        reason: "No breaks taken today, afternoon energy dip",
+        type: 'meditation',
+        urgency: 'low'
+      };
+    }
+
+    return {
+      needed: false,
+      reason: "Recent break taken or low activity",
+      type: '',
+      urgency: 'low'
+    };
+  }
+
+  private async checkMeetingConflicts(userId: string, now: Date): Promise<{hasConflict: boolean, reason: string, suggestAfter?: Date}> {
+    const meetings = await storage.getMeetingsByDate(userId, now);
+    
+    // Check if currently in a meeting
+    const currentMeeting = meetings.find(m => {
+      const start = new Date(m.startTime);
+      const end = new Date(m.endTime);
+      return start <= now && end >= now;
+    });
+
+    if (currentMeeting) {
+      return {
+        hasConflict: true,
+        reason: `Currently in "${currentMeeting.title}"`,
+        suggestAfter: new Date(currentMeeting.endTime)
+      };
+    }
+
+    // Check if meeting starting soon (within 10 minutes)
+    const soonMeeting = meetings.find(m => {
+      const start = new Date(m.startTime);
+      const minutesUntil = (start.getTime() - now.getTime()) / (1000 * 60);
+      return minutesUntil > 0 && minutesUntil <= 10;
+    });
+
+    if (soonMeeting) {
+      return {
+        hasConflict: true,
+        reason: `"${soonMeeting.title}" starts in ${Math.round((new Date(soonMeeting.startTime).getTime() - now.getTime()) / (1000 * 60))} minutes`,
+        suggestAfter: new Date(soonMeeting.endTime)
+      };
+    }
+
+    return { hasConflict: false, reason: "No conflicts" };
+  }
+
+  private scheduleDelayedBreakSuggestion(userId: string, suggestAfter: Date) {
+    const delay = suggestAfter.getTime() - Date.now() + (5 * 60 * 1000); // 5 minutes after meeting ends
+    
+    if (delay > 0 && delay < 24 * 60 * 60 * 1000) { // Within 24 hours
+      setTimeout(async () => {
+        console.log(`Sending delayed break suggestion for user ${userId}`);
+        const breakNeeded = await this.analyzeBreakNeed(userId, new Date());
+        if (breakNeeded.needed) {
+          await this.sendProactiveBreakAlert(userId, breakNeeded);
+        }
+      }, delay);
+    }
+  }
+
+  private async sendProactiveBreakAlert(userId: string, breakInfo: {reason: string, type: string, urgency: 'low' | 'medium' | 'high'}) {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) return;
+
+      const client = await this.getUserClient(user.id);
+      if (!client) {
+        console.log(`No user client available for ${userId}, falling back to bot`);
+        const botClient = await this.getClient(user.slackTeamId || undefined);
+        if (!botClient) return;
+        
+        await botClient.chat.postMessage({
+          channel: user.slackUserId,
+          text: `💡 *Break Time Suggestion*\n\n${this.getBreakMessage(breakInfo.type)}\n\n${breakInfo.reason}\n\nUse \`/break\` when you're ready!`
+        });
+        return;
+      }
+
+      const urgencyIcon = {
+        low: '💡',
+        medium: '⚠️', 
+        high: '🚨'
+      }[breakInfo.urgency];
+
+      const breakMessages = {
+        stretch: "🤸 Time to stretch and move around",
+        hydration: "💧 Stay hydrated with a water break", 
+        walk: "🚶 How about a quick walk outside?",
+        meditation: "🧘 Try a 5-minute mindfulness break"
+      };
+
+      const message = breakMessages[breakInfo.type as keyof typeof breakMessages] || "Take a quick wellness break";
+
+      await client.chat.postMessage({
+        channel: user.slackUserId,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn", 
+              text: `${urgencyIcon} *Break Time Suggestion*\n\n${message}\n\n_${breakInfo.reason}_`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Take Break Now ☕"
+                },
+                style: "primary",
+                action_id: "proactive_break_now",
+                value: JSON.stringify({ userId, type: breakInfo.type })
+              },
+              {
+                type: "button", 
+                text: {
+                  type: "plain_text",
+                  text: "Delay 30 min ⏰"
+                },
+                action_id: "proactive_break_delay_30",
+                value: JSON.stringify({ userId, type: breakInfo.type })
+              },
+              {
+                type: "button",
+                text: {
+                  type: "plain_text", 
+                  text: "Delay 1 hour ⏱️"
+                },
+                action_id: "proactive_break_delay_60", 
+                value: JSON.stringify({ userId, type: breakInfo.type })
+              },
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Not now ❌"
+                },
+                action_id: "proactive_break_dismiss",
+                value: JSON.stringify({ userId })
+              }
+            ]
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "💡 _This suggestion respects your meeting schedule and current activity_"
+              }
+            ]
+          }
+        ]
+      });
+
+      // Log the proactive suggestion
+      await storage.logActivity({
+        userId,
+        action: "proactive_break_suggested",
+        details: { 
+          type: breakInfo.type,
+          reason: breakInfo.reason,
+          urgency: breakInfo.urgency
+        }
+      });
+
+    } catch (error) {
+      console.error("Failed to send proactive break alert:", error);
+    }
+  }
+
+  private isWorkingHours(date: Date): boolean {
+    const hour = date.getHours();
+    const day = date.getDay();
+    
+    // Monday-Friday, 8 AM - 6 PM
+    return day >= 1 && day <= 5 && hour >= 8 && hour <= 18;
+  }
+
+  // Proactive Break Button Handlers
+  private async handleProactiveBreakNow(actionValue: string, slackUserId: string) {
+    try {
+      const { userId, type } = JSON.parse(actionValue);
+      
+      // Start the break immediately
+      await this.setBreakMode(userId, type === 'walk' ? 15 : 20); // Shorter breaks for walks
+      
+      // Log the activity
+      await storage.logActivity({
+        userId,
+        action: "proactive_break_accepted",
+        details: { type, timing: "immediate" }
+      });
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `✅ *Break Started!*\n\n${this.getBreakMessage(type)}\n\n⏰ Duration: ${type === 'walk' ? 15 : 20} minutes\n🕐 Your Slack status has been updated automatically!\n\n💡 *Enjoy your break and return refreshed!*`
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Proactive break now error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to start break. Please try again."
+      };
+    }
+  }
+
+  private async handleProactiveBreakDelay(actionValue: string, slackUserId: string, delayMinutes: number) {
+    try {
+      const { userId, type } = JSON.parse(actionValue);
+      
+      // Schedule the break for later
+      setTimeout(async () => {
+        const breakNeeded = await this.analyzeBreakNeed(userId, new Date());
+        if (breakNeeded.needed) {
+          await this.sendProactiveBreakAlert(userId, breakNeeded);
+        }
+      }, delayMinutes * 60 * 1000);
+
+      // Log the delay
+      await storage.logActivity({
+        userId,
+        action: "proactive_break_delayed",
+        details: { type, delayMinutes }
+      });
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `⏰ *Break Delayed*\n\nI'll remind you about taking a ${type} break in ${delayMinutes} minutes.\n\n💡 *Tip:* Try to wrap up your current task before then so you can take a proper break!`
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Proactive break delay error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to delay break. Please try again."
+      };
+    }
+  }
+
+  private async handleProactiveBreakDismiss(actionValue: string, slackUserId: string) {
+    try {
+      const { userId } = JSON.parse(actionValue);
+      
+      // Log the dismissal
+      await storage.logActivity({
+        userId,
+        action: "proactive_break_dismissed",
+        details: { reason: "user_dismissed" }
+      });
+
+      return {
+        replace_original: true,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `👍 *Break Suggestion Dismissed*\n\nNo worries! Remember to take breaks when you can.\n\n💡 *Pro tip:* Regular breaks help maintain focus and prevent burnout. I'll check in with you again later.`
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Proactive break dismiss error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to dismiss break. Please try again."
+      };
     }
   }
 }

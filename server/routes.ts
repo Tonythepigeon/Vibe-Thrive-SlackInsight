@@ -862,6 +862,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Start break monitoring endpoint
+  app.post("/api/start-break-monitoring", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID required" });
+      }
+
+      const { slackService } = await import('./services/slack');
+      await slackService.startProactiveBreakMonitoring(userId);
+      
+      res.json({ success: true, message: "Break monitoring started successfully" });
+    } catch (error) {
+      console.error("Failed to start break monitoring:", error);
+      res.status(500).json({ error: "Failed to start break monitoring" });
+    }
+  });
+
   // Dashboard endpoint that includes meetings
   app.get("/api/dashboard/:userId", async (req, res) => {
     try {
