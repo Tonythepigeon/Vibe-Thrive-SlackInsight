@@ -3763,25 +3763,15 @@ class SlackService {
 
       console.log(`✅ Found user for break alert: ${user.name} (${user.slackUserId})`);
 
-      const client = await this.getUserClient(user.id);
-      if (!client) {
-        console.log(`⚠️ No user client available for ${userId}, falling back to bot`);
-        const botClient = await this.getClient(user.slackTeamId || undefined);
-        if (!botClient) {
-          console.log(`❌ No bot client available either for team ${user.slackTeamId}`);
-          return;
-        }
-        
-        console.log(`📱 Sending simple break message via bot client to ${user.slackUserId}`);
-        await botClient.chat.postMessage({
-          channel: user.slackUserId,
-          text: `💡 *Break Time Suggestion*\n\n${this.getBreakMessage(breakInfo.type)}\n\n${breakInfo.reason}\n\nUse \`/break\` when you're ready!`
-        });
-        console.log(`✅ Simple break message sent successfully`);
+      // Use bot client directly (user tokens may be revoked)
+      console.log(`🤖 Using bot client for break alert (more reliable than user tokens)`);
+      const botClient = await this.getClient(user.slackTeamId || undefined);
+      if (!botClient) {
+        console.log(`❌ No bot client available for team ${user.slackTeamId}`);
         return;
       }
 
-      console.log(`✅ User client available, sending interactive break alert`);
+      console.log(`📱 Sending break alert via bot client to ${user.slackUserId}`);
 
       const urgencyIcon = {
         low: '💡',
@@ -3798,7 +3788,7 @@ class SlackService {
 
       const message = breakMessages[breakInfo.type as keyof typeof breakMessages] || "Take a quick wellness break";
 
-      await client.chat.postMessage({
+      await botClient.chat.postMessage({
         channel: user.slackUserId,
         text: `${urgencyIcon} Break Time Suggestion: ${message} - ${breakInfo.reason}`,
         blocks: [
