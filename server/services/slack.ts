@@ -1344,13 +1344,15 @@ class SlackService {
           text: response.message,
           blocks: this.formatAIResponseBlocks(response)
         });
-        return;
+        return; // Exit here - don't fall through to fallback
       }
     } catch (error) {
-      console.error("AI service unavailable for DM, falling back to simple responses:", error);
+      console.error("AI service error for DM, falling back to simple responses:", error);
+      // Only fall through to fallback if AI service is completely unavailable
+      // or if there was a critical error
     }
 
-    // Fallback to simple responses for DMs
+    // Only reach here if AI service is unhealthy or failed completely
     await this.handleDirectMessageFallback(event);
   }
 

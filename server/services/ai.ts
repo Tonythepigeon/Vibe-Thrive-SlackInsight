@@ -200,49 +200,40 @@ Rules:
     
     // Check if this is an end request
     if (intent.parameters && 'end' in intent.parameters) {
-      return await slackService.handleSlashCommand({
-        body: {
-          command: '/focus',
-          text: 'end',
-          user_id: userId,
-          team_id: teamId
-        }
-      }, { json: (response: any) => response });
+      // Return command info without executing it directly
+      return {
+        command: 'focus',
+        action: 'end',
+        success: true
+      };
     }
     
     // Start focus session
-    return await slackService.handleSlashCommand({
-      body: {
-        command: '/focus',
-        text: duration.toString(),
-        user_id: userId,
-        team_id: teamId
-      }
-    }, { json: (response: any) => response });
+    return {
+      command: 'focus',
+      action: 'start',
+      duration: duration,
+      success: true
+    };
   }
 
   private async executeBreakCommand(intent: CommandIntent, userId: string, teamId: string) {
     const breakType = intent.parameters?.breakType || 'general';
     
-    return await slackService.handleSlashCommand({
-      body: {
-        command: '/break',
-        text: breakType,
-        user_id: userId,
-        team_id: teamId
-      }
-    }, { json: (response: any) => response });
+    return {
+      command: 'break',
+      action: 'suggest',
+      breakType: breakType,
+      success: true
+    };
   }
 
   private async executeProductivityCommand(userId: string, teamId: string) {
-    return await slackService.handleSlashCommand({
-      body: {
-        command: '/productivity',
-        text: '',
-        user_id: userId,
-        team_id: teamId
-      }
-    }, { json: (response: any) => response });
+    return {
+      command: 'productivity',
+      action: 'show',
+      success: true
+    };
   }
 
   private async generateResponse(
@@ -265,19 +256,36 @@ Generate a warm, friendly greeting response that:
 
 Keep it friendly and concise. Make them feel welcome!`;
       } else {
+        // Generate specific responses based on the command
+        let commandDescription = '';
+        if (commandResult?.command === 'focus') {
+          if (commandResult?.action === 'start') {
+            commandDescription = `Starting a ${commandResult.duration}-minute focus session`;
+          } else {
+            commandDescription = 'Ending your current focus session';
+          }
+        } else if (commandResult?.command === 'break') {
+          commandDescription = `Suggesting a ${commandResult.breakType} break`;
+        } else if (commandResult?.command === 'productivity') {
+          commandDescription = 'Showing your productivity metrics';
+        }
+
         responsePrompt = `Based on this user request and command execution, generate a helpful, friendly response.
 
 User's original message: "${originalMessage}"
-Command executed: ${intent.action}
-Command successful: ${commandResult ? 'yes' : 'no'}
+Command: ${commandDescription}
+Command successful: ${commandResult?.success ? 'yes' : 'no'}
 
 Generate a response that:
 1. Acknowledges what the user wanted
-2. Confirms what action was taken
+2. Explains what I'm going to do for them
 3. Provides 2-3 helpful tips or recommendations related to productivity
 4. Is warm, encouraging, and supportive
+5. Mentions that they can use slash commands for direct actions
 
-Keep it concise but helpful. Focus on productivity and wellness benefits.`;
+Keep it concise but helpful. Focus on productivity and wellness benefits.
+
+IMPORTANT: End your response with a brief mention of slash commands like: "You can also use /focus, /break, or /productivity for quick actions!"`;
       }
 
       const response = await this.llm.invoke([
