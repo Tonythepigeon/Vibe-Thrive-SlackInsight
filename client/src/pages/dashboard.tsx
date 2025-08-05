@@ -35,6 +35,8 @@ export default function Dashboard() {
   const [timeDirection, setTimeDirection] = useState<'+' | '-'>('+');
   const [timeAmount, setTimeAmount] = useState<number>(2);
   const [timeUnit, setTimeUnit] = useState<'minutes' | 'hours' | 'days'>('hours');
+  const [demoTime, setDemoTime] = useState<Date | null>(null);
+  const [isDemo, setIsDemo] = useState<boolean>(false);
 
   // Extract user ID from URL or get from localStorage/context
   useEffect(() => {
@@ -48,6 +50,13 @@ export default function Dashboard() {
       setUserId(storedUserId);
     }
   }, []);
+
+  // Fetch demo time when userId changes
+  useEffect(() => {
+    if (userId) {
+      fetchDemoTime();
+    }
+  }, [userId]);
 
   const { data, refetch, isLoading, error } = useQuery<DashboardData>({
     queryKey: [`/api/dashboard/${userId}`],
@@ -70,6 +79,7 @@ export default function Dashboard() {
       if (response.ok) {
         refetch();
         setShowTestDataButton(false);
+        fetchDemoTime(); // Update demo time after generating test data
       }
     } catch (error) {
       console.error("Failed to generate test data:", error);
@@ -90,9 +100,25 @@ export default function Dashboard() {
       
       if (response.ok) {
         refetch();
+        fetchDemoTime(); // Update demo time after clearing data
       }
     } catch (error) {
       console.error("Failed to clear demo data:", error);
+    }
+  };
+
+  const fetchDemoTime = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch(`/api/demo-time/${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setDemoTime(new Date(data.demoTime));
+        setIsDemo(data.isDemo);
+      }
+    } catch (error) {
+      console.error("Failed to fetch demo time:", error);
     }
   };
 
@@ -124,6 +150,7 @@ export default function Dashboard() {
       
       if (response.ok) {
         refetch();
+        fetchDemoTime(); // Update demo time after skipping
       }
     } catch (error) {
       console.error("Failed to skip time:", error);
@@ -246,7 +273,9 @@ export default function Dashboard() {
   const totalMeetingTime = meetings.reduce((sum, meeting) => sum + meeting.duration, 0);
   const avgMeetingDuration = totalMeetings > 0 ? Math.round(totalMeetingTime / totalMeetings) : 0;
   
-  const todayKey = formatDate(new Date().toISOString(), user.timezone);
+  // Use demo time if available, otherwise use current time
+  const currentTime = demoTime || new Date();
+  const todayKey = formatDate(currentTime.toISOString(), user.timezone);
   const todaysMeetings = groupedMeetings[todayKey] || [];
 
   return (
@@ -316,6 +345,27 @@ export default function Dashboard() {
             <Button onClick={skipTime} variant="outline">
               ⏰ Skip Time
             </Button>
+          </div>
+
+          <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+            <div className="text-sm text-gray-700">
+              <strong>Current System Time:</strong>{' '}
+              {demoTime ? (
+                <span className={isDemo ? 'text-blue-600' : 'text-gray-600'}>
+                  {demoTime.toLocaleString(undefined, { 
+                    timeZone: user?.timezone || 'UTC',
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                  {isDemo && ' (Demo Time)'}
+                </span>
+              ) : (
+                <span>Loading...</span>
+              )}
+            </div>
           </div>
           
           <div className="flex items-center justify-between">

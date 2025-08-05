@@ -884,6 +884,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get current demo time for a user (based on time skips)
+  app.get("/api/demo-time/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      // Get recent meetings and focus sessions to determine demo time offset
+      const farPast = new Date(0);
+      const farFuture = new Date(2030, 0, 1);
+      
+      const recentMeetings = await storage.getUserMeetings(userId, farPast, farFuture);
+      const recentFocus = await storage.getFocusSessionsByDateRange(userId, farPast, farFuture);
+      
+      let demoTime = new Date(); // Default to current time
+      let isDemo = false;
+      
+      // Find the most recent timestamp from meetings or focus sessions
+      const allTimestamps: Date[] = [];
+      
+      recentMeetings.forEach((meeting: any) => {
+        if (meeting.startTime) allTimestamps.push(new Date(meeting.startTime));
+      });
+      
+      recentFocus.forEach((session: any) => {
+        if (session.startTime) allTimestamps.push(new Date(session.startTime));
+      });
+      
+      if (allTimestamps.length > 0) {
+        // Sort to get the most recent timestamp
+        allTimestamps.sort((a, b) => b.getTime() - a.getTime());
+        const mostRecent = allTimestamps[0];
+        
+        // If we have demo data and it's significantly different from now, use it as demo time
+        const now = new Date();
+        const timeDiff = Math.abs(now.getTime() - mostRecent.getTime());
+        const hoursDiff = timeDiff / (1000 * 60 * 60);
+        
+        if (hoursDiff > 1) { // If more than 1 hour difference, consider it demo time
+          demoTime = mostRecent;
+          isDemo = true;
+        }
+      }
+      
+      res.json({ 
+        demoTime: demoTime.toISOString(),
+        isDemo,
+        realTime: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Failed to get demo time:", error);
+      res.status(500).json({ error: "Failed to get demo time" });
+    }
+  });
+
   // Start break monitoring endpoint
   app.post("/api/start-break-monitoring", async (req, res) => {
     try {
