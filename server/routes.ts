@@ -555,6 +555,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Slack token health check
+  app.get("/api/health/slack", async (req, res) => {
+    try {
+      console.log("🔍 Slack token health check requested");
+      
+      // Check environment token
+      const envToken = process.env.SLACK_BOT_TOKEN;
+      console.log(`🌍 Environment token exists: ${!!envToken}`);
+      if (envToken) {
+        console.log(`🔐 Env token starts with: ${envToken.substring(0, 10)}...`);
+        console.log(`🔐 Env token length: ${envToken.length}`);
+      }
+
+      // Test the token by making a simple API call
+      const { slackService } = await import('./services/slack');
+      const testClient = await (slackService as any).getClient();
+      
+      console.log("🧪 Testing Slack API call with token...");
+      const authTest = await testClient.auth.test();
+      console.log("✅ Slack auth test successful:", authTest);
+      
+      res.json({
+        status: "ok",
+        slack: "connected",
+        botId: authTest.bot_id,
+        userId: authTest.user_id,
+        team: authTest.team,
+        tokenType: envToken ? "environment" : "database",
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("❌ Slack token health check failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        status: "error",
+        slack: "failed", 
+        error: errorMessage,
+        tokenExists: !!process.env.SLACK_BOT_TOKEN,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Slack App endpoints - Fix context binding by using arrow functions
   app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
   app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
