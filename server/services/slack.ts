@@ -176,8 +176,8 @@ class SlackService {
   }
 
   private isSimpleCommand(command: string, text: string): boolean {
-    // /test command is always simple
-    if (command === "/test") {
+    // These commands are always simple
+    if (command === "/test" || command === "/productivity") {
       return true;
     }
     
@@ -1464,7 +1464,7 @@ class SlackService {
       const result = await Promise.race([
         this.processProductivityCommand(userId, teamId),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Operation timeout')), 1000)
+          setTimeout(() => reject(new Error('Operation timeout')), 2500)
         )
       ]);
       
@@ -1483,6 +1483,11 @@ class SlackService {
   }
 
   private async processProductivityCommand(userId: string, teamId: string) {
+    // Validate inputs
+    if (!userId || !teamId) {
+      throw new Error("Invalid user ID or team ID");
+    }
+
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
 
