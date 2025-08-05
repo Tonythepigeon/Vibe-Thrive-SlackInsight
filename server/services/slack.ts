@@ -3407,30 +3407,20 @@ class SlackService {
 
       console.log(`✅ Found user for test message: ${user.name} (${user.slackUserId})`);
 
-      const client = await this.getUserClient(user.id);
-      if (!client) {
-        console.log(`⚠️ No user client available for ${userId}, falling back to bot`);
-        const botClient = await this.getClient(user.slackTeamId || undefined);
-        if (!botClient) {
-          console.log(`❌ No bot client available either for team ${user.slackTeamId}`);
-          return;
-        }
-        
-        console.log(`📱 Sending simple test message via bot client to ${user.slackUserId}`);
-        await botClient.chat.postMessage({
-          channel: user.slackUserId,
-          text: `🧪 Test message from ProductivityWise! If you can see this, Slack messaging is working correctly. Current time: ${new Date().toLocaleString()}`
-        });
-        console.log(`✅ Simple test message sent successfully via bot`);
+      // Use bot client directly (we know it works, user tokens may be revoked)
+      console.log(`🤖 Using bot client for test message (more reliable than user tokens)`);
+      const botClient = await this.getClient(user.slackTeamId || undefined);
+      if (!botClient) {
+        console.log(`❌ No bot client available for team ${user.slackTeamId}`);
         return;
       }
-
-      console.log(`✅ User client available, sending test message`);
-      await client.chat.postMessage({
+      
+      console.log(`📱 Sending test message via bot client to ${user.slackUserId}`);
+      await botClient.chat.postMessage({
         channel: user.slackUserId,
         text: `🧪 Test message from ProductivityWise! If you can see this, Slack messaging is working correctly. Current time: ${new Date().toLocaleString()}`
       });
-      console.log(`✅ Test message sent successfully via user client to ${user.slackUserId}`);
+      console.log(`✅ Test message sent successfully via bot client to ${user.slackUserId}`);
       
     } catch (error) {
       console.error("❌ Error sending test message:", error);
