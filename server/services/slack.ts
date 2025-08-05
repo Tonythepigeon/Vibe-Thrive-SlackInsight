@@ -3365,7 +3365,7 @@ class SlackService {
       const demoTime = await this.getDemoTimeForUser(userId);
       console.log(`⏰ Using demo time for break check: ${demoTime.toISOString()}`);
       
-      const workingHours = this.isWorkingHours(demoTime);
+      const workingHours = this.isWorkingHours(demoTime, user.timezone || undefined);
       if (!workingHours) {
         console.log(`🚫 Skipping break check for ${userId} - outside working hours (demo time: ${demoTime.getHours()}:${demoTime.getMinutes()})`);
         return;
@@ -3800,13 +3800,25 @@ class SlackService {
     }
   }
 
-  private isWorkingHours(date: Date): boolean {
-    const hour = date.getHours();
-    const day = date.getDay();
+  private isWorkingHours(date: Date, userTimezone?: string): boolean {
+    // Convert to user's timezone if provided
+    let localHour: number;
+    let localDay: number;
+    
+    if (userTimezone) {
+      // Get the date in user's timezone
+      const userDate = new Date(date.toLocaleString('en-US', { timeZone: userTimezone }));
+      localHour = userDate.getHours();
+      localDay = userDate.getDay();
+    } else {
+      // Fallback to UTC
+      localHour = date.getHours();
+      localDay = date.getDay();
+    }
     
     // Monday-Friday, 6 AM - 11 PM (expanded for demo purposes)
     // This allows break suggestions throughout most of the day for demo
-    return day >= 1 && day <= 5 && hour >= 6 && hour <= 23;
+    return localDay >= 1 && localDay <= 5 && localHour >= 6 && localHour <= 23;
   }
 
   // Proactive Break Button Handlers
