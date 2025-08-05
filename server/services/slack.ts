@@ -13,7 +13,10 @@ class SlackService {
   }
 
   private async getClient(teamId?: string): Promise<WebClient> {
+    console.log(`🔑 Getting Slack client for teamId: ${teamId}`);
+    
     if (teamId && this.clients.has(teamId)) {
+      console.log(`✅ Using cached client for team: ${teamId}`);
       return this.clients.get(teamId)!;
     }
 
@@ -22,9 +25,13 @@ class SlackService {
       try {
         const team = await storage.getSlackTeam(teamId);
         if (team && team.botToken) {
+          console.log(`🏢 Found team-specific bot token for team: ${teamId}`);
+          console.log(`🔐 Token starts with: ${team.botToken.substring(0, 10)}...`);
           const client = new WebClient(team.botToken);
           this.clients.set(teamId, client);
           return client;
+        } else {
+          console.log(`⚠️ No bot token found for team: ${teamId}`);
         }
       } catch (error) {
         console.error("Failed to get team from database:", error);
@@ -33,18 +40,21 @@ class SlackService {
 
     // Fallback to default client with environment bot token
     if (this.clients.has("default")) {
+      console.log(`🔄 Using cached default client`);
       return this.clients.get("default")!;
     }
 
     // Create default client if we have a bot token
     if (process.env.SLACK_BOT_TOKEN) {
+      console.log(`🌍 Using environment bot token`);
+      console.log(`🔐 Env token starts with: ${process.env.SLACK_BOT_TOKEN.substring(0, 10)}...`);
       const defaultClient = new WebClient(process.env.SLACK_BOT_TOKEN);
       this.clients.set("default", defaultClient);
       return defaultClient;
     }
 
     // If no token available, create a client anyway (will fail auth but won't crash)
-    console.warn("No Slack bot token available - commands may fail");
+    console.error("❌ No Slack bot token available - commands will fail with invalid_auth");
     return new WebClient();
   }
 
@@ -2105,12 +2115,16 @@ class SlackService {
           event.team || 'default'
         );
         
+        console.log(`🤖 Processing AI message for user ${event.user} in team ${event.team}`);
         const client = await this.getClient(event.team);
+        
+        console.log(`📤 Sending AI response to channel ${event.channel}`);
         await client.chat.postMessage({
           channel: event.channel,
           text: response.message,
           blocks: this.formatAIResponseBlocks(response)
         });
+        console.log(`✅ AI response sent successfully`);
         return; // Exit here - don't fall through to fallback
       }
     } catch (error) {
@@ -2124,6 +2138,7 @@ class SlackService {
   }
 
   private async handleDirectMessageFallback(event: any) {
+    console.log(`🔄 Using fallback response for user ${event.user} in team ${event.team}`);
     const client = await this.getClient(event.team);
     const text = event.text.toLowerCase();
 
