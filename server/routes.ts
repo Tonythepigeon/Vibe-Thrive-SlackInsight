@@ -1027,6 +1027,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Test simple Slack message endpoint (for debugging)
+  app.post("/api/test-slack-message", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ error: "User ID required" });
+      }
+
+      console.log(`📱 Testing simple Slack message for userId: ${userId}`);
+      const { slackService } = await import('./services/slack');
+      await slackService.sendTestMessage(userId);
+      
+      res.json({ success: true, message: "Test message sent - check your Slack DMs!" });
+    } catch (error) {
+      console.error("Failed to send test message:", error);
+      res.status(500).json({ error: "Failed to send test message" });
+    }
+  });
+
   // Dashboard endpoint that includes meetings
   app.get("/api/dashboard/:userId", async (req, res) => {
     try {

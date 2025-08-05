@@ -3347,6 +3347,52 @@ class SlackService {
     }
   }
 
+  // Send a simple test message (for debugging Slack connectivity)
+  async sendTestMessage(userId: string) {
+    try {
+      console.log(`📤 Sending test message to user ${userId}`);
+      
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) {
+        console.log(`❌ No user or Slack user ID found for ${userId}`);
+        return;
+      }
+
+      console.log(`✅ Found user for test message: ${user.name} (${user.slackUserId})`);
+
+      const client = await this.getUserClient(user.id);
+      if (!client) {
+        console.log(`⚠️ No user client available for ${userId}, falling back to bot`);
+        const botClient = await this.getClient(user.slackTeamId || undefined);
+        if (!botClient) {
+          console.log(`❌ No bot client available either for team ${user.slackTeamId}`);
+          return;
+        }
+        
+        console.log(`📱 Sending simple test message via bot client to ${user.slackUserId}`);
+        await botClient.chat.postMessage({
+          channel: user.slackUserId,
+          text: `🧪 Test message from ProductivityWise! If you can see this, Slack messaging is working correctly. Current time: ${new Date().toLocaleString()}`
+        });
+        console.log(`✅ Simple test message sent successfully via bot`);
+        return;
+      }
+
+      console.log(`✅ User client available, sending test message`);
+      await client.chat.postMessage({
+        channel: user.slackUserId,
+        text: `🧪 Test message from ProductivityWise! If you can see this, Slack messaging is working correctly. Current time: ${new Date().toLocaleString()}`
+      });
+      console.log(`✅ Test message sent successfully via user client to ${user.slackUserId}`);
+      
+    } catch (error) {
+      console.error("❌ Error sending test message:", error);
+      if (error instanceof Error) {
+        console.error("Stack trace:", error.stack);
+      }
+    }
+  }
+
   // Check for breaks immediately after time skip (for demo purposes)
   async checkBreakAfterTimeSkip(userId: string) {
     try {
@@ -3717,6 +3763,7 @@ class SlackService {
 
       await client.chat.postMessage({
         channel: user.slackUserId,
+        text: `${urgencyIcon} Break Time Suggestion: ${message} - ${breakInfo.reason}`,
         blocks: [
           {
             type: "section",
