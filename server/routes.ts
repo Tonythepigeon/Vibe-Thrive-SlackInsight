@@ -275,6 +275,10 @@ async function clearFocusAndBreakData(userId: string) {
       // Continue anyway - we'll recalculate them
     }
     
+    // Clear time offset when clearing demo data
+    userTimeOffsets.delete(userId);
+    console.log(`Cleared time offset for user ${userId}`);
+    
     // Recalculate productivity metrics without focus/break data
     const { analyticsService } = await import('./services/analytics');
     const today = new Date();
@@ -295,6 +299,9 @@ async function clearFocusAndBreakData(userId: string) {
   }
 }
 
+// Store time offsets for each user (in-memory for demo purposes)
+const userTimeOffsets = new Map<string, number>();
+
 // Skip time forward/backward for demo purposes
 async function skipTimeForward(userId: string, days: number) {
   const absDays = Math.abs(days);
@@ -311,16 +318,21 @@ async function skipTimeForward(userId: string, days: number) {
   
   console.log(`Skipping ${timeUnit} ${direction} for user ${userId}`);
   
+  // Update user's time offset
+  const millisecondsToAdd = days * 24 * 60 * 60 * 1000;
+  const currentOffset = userTimeOffsets.get(userId) || 0;
+  const newOffset = currentOffset + millisecondsToAdd;
+  userTimeOffsets.set(userId, newOffset);
+  
+  console.log(`User ${userId} time offset: ${currentOffset}ms -> ${newOffset}ms`);
+  
   try {
-    // Move all meetings forward by the specified number of days
+    // Move all meetings forward by the specified number of days (or fractions of days for hours/minutes)
     const allMeetings = await storage.getUserMeetings(userId, new Date(0), new Date(2030, 0, 1)); // Get all meetings
     
     for (const meeting of allMeetings) {
-      const newStartTime = new Date(meeting.startTime);
-      newStartTime.setDate(newStartTime.getDate() + days);
-      
-      const newEndTime = new Date(meeting.endTime);
-      newEndTime.setDate(newEndTime.getDate() + days);
+      const newStartTime = new Date(meeting.startTime.getTime() + millisecondsToAdd);
+      const newEndTime = new Date(meeting.endTime.getTime() + millisecondsToAdd);
       
       // Update the meeting with new times
       await storage.updateMeeting(meeting.id, {
@@ -335,14 +347,12 @@ async function skipTimeForward(userId: string, days: number) {
     const allFocusSessions = await storage.getFocusSessionsByDateRange(userId, new Date(0), new Date(2030, 0, 1));
     
     for (const session of allFocusSessions) {
-      const newStartTime = new Date(session.startTime);
-      newStartTime.setDate(newStartTime.getDate() + days);
+      const newStartTime = new Date(session.startTime.getTime() + millisecondsToAdd);
       
       const updateData: any = { startTime: newStartTime };
       
       if (session.endTime) {
-        const newEndTime = new Date(session.endTime);
-        newEndTime.setDate(newEndTime.getDate() + days);
+        const newEndTime = new Date(session.endTime.getTime() + millisecondsToAdd);
         updateData.endTime = newEndTime;
       }
       
@@ -356,8 +366,7 @@ async function skipTimeForward(userId: string, days: number) {
     
     // Recalculate metrics for the new date range
     const { analyticsService } = await import('./services/analytics');
-    const today = new Date();
-    today.setDate(today.getDate() + days);
+    const today = new Date(new Date().getTime() + millisecondsToAdd);
     
     for (let i = -7; i < 7; i++) {
       const date = new Date(today);
@@ -913,7 +922,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (session.startTime) allTimestamps.push(new Date(session.startTime));
       });
       
-      if (allTimestamps.length > 0) {
+      // Check if we have a stored time offset for this user
+      const storedOffset = userTimeOffsets.get(userId) || 0;
+      
+      if (storedOffset !== 0) {
+        // Use the stored offset to calculate demo time
+        const now = new Date();
+        demoTime = new Date(now.getTime() + storedOffset);
+        isDemo = true;
+        
+        console.log(`Demo time calculation for ${userId}:`);
+        console.log(`  Current time: ${now.toISOString()}`);
+        console.log(`  Stored offset: ${storedOffset}ms (${storedOffset / (1000 * 60 * 60)} hours)`);  
+        console.log(`  Demo time: ${demoTime.toISOString()}`);
+      } else if (allTimestamps.length > 0) {
+        // Fallback: try to infer offset from meeting data
         const now = new Date();
         
         // Sort timestamps to find the most recent one
@@ -934,7 +957,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             demoTime = new Date(now.getTime() + timeDiff);
             isDemo = true;
             
-            console.log(`Demo time calculation for ${userId}:`);
+            console.log(`Demo time fallback calculation for ${userId}:`);
             console.log(`  Current time: ${now.toISOString()}`);
             console.log(`  Most recent event: ${mostRecent.toISOString()}`);
             console.log(`  Time diff: ${timeDiff}ms (${timeDiff / (1000 * 60 * 60)} hours)`);
