@@ -5,6 +5,7 @@ import { slackService } from "./services/slack";
 import { calendarService } from "./services/calendar";
 import { analyticsService } from "./services/analytics";
 import { schedulerService } from "./services/scheduler";
+import { aiService } from "./services/ai";
 import { insertUserSchema, insertIntegrationSchema, insertFocusSessionSchema, type InsertMeeting } from "@shared/schema";
 
 // Generate realistic test meeting data for a user
@@ -525,6 +526,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/slack/install", (req, res) => slackService.handleInstall(req, res));
   app.post("/api/slack/commands", (req, res) => slackService.handleSlashCommand(req, res));
   app.post("/api/slack/interactive", (req, res) => slackService.handleInteractivity(req, res));
+
+  // AI Service endpoints
+  app.post("/api/ai/chat", async (req, res) => {
+    try {
+      const { message, userId, teamId } = req.body;
+      
+      if (!message || !userId || !teamId) {
+        return res.status(400).json({ 
+          error: "Missing required fields: message, userId, teamId" 
+        });
+      }
+
+      const response = await aiService.processUserMessage(message, userId, teamId);
+      res.json(response);
+    } catch (error) {
+      console.error("AI chat error:", error);
+      res.status(500).json({ 
+        error: "Failed to process AI request",
+        message: "Sorry, I encountered an issue processing your request. Please try again." 
+      });
+    }
+  });
+
+  app.get("/api/ai/health", async (req, res) => {
+    try {
+      const isHealthy = await aiService.isHealthy();
+      res.json({ 
+        healthy: isHealthy,
+        timestamp: new Date().toISOString(),
+        status: isHealthy ? "AI service is operational" : "AI service is unavailable"
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        healthy: false,
+        error: "Health check failed",
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
 
   // User management
   app.get("/api/users/:id", async (req, res) => {

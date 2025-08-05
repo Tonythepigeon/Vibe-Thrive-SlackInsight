@@ -12,8 +12,11 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
+    "@langchain/core": "^0.3.66",
+    "@langchain/google-genai": "^0.2.16",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@neondatabase/serverless": "^0.10.4",
     "@radix-ui/react-accordion": "^1.2.4",
@@ -58,6 +61,7 @@
     "framer-motion": "^11.13.1",
     "googleapis": "^154.1.0",
     "input-otp": "^1.4.2",
+    "langchain": "^0.3.30",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "nanoid": "^5.1.5",
