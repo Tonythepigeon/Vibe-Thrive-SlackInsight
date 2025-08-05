@@ -914,18 +914,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       if (allTimestamps.length > 0) {
-        // Sort to get the most recent timestamp
+        const now = new Date();
+        
+        // Sort timestamps to find the most recent one
         allTimestamps.sort((a, b) => b.getTime() - a.getTime());
         const mostRecent = allTimestamps[0];
         
-        // If we have demo data and it's significantly different from now, use it as demo time
-        const now = new Date();
-        const timeDiff = Math.abs(now.getTime() - mostRecent.getTime());
-        const hoursDiff = timeDiff / (1000 * 60 * 60);
+        // Calculate how far the most recent event is from now
+        const timeDiff = mostRecent.getTime() - now.getTime();
+        const hoursDiff = Math.abs(timeDiff) / (1000 * 60 * 60);
         
-        if (hoursDiff > 1) { // If more than 1 hour difference, consider it demo time
-          demoTime = mostRecent;
-          isDemo = true;
+        // If there's a significant time offset (more than 30 minutes)
+        if (hoursDiff > 0.5) {
+          // But cap the offset to reasonable bounds (within 30 days)
+          const maxOffset = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+          
+          if (Math.abs(timeDiff) <= maxOffset) {
+            // Demo time = current time + offset
+            demoTime = new Date(now.getTime() + timeDiff);
+            isDemo = true;
+            
+            console.log(`Demo time calculation for ${userId}:`);
+            console.log(`  Current time: ${now.toISOString()}`);
+            console.log(`  Most recent event: ${mostRecent.toISOString()}`);
+            console.log(`  Time diff: ${timeDiff}ms (${timeDiff / (1000 * 60 * 60)} hours)`);
+            console.log(`  Demo time: ${demoTime.toISOString()}`);
+          }
         }
       }
       
