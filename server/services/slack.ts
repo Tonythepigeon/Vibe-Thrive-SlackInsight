@@ -24,14 +24,14 @@ class SlackService {
     if (teamId) {
       try {
         const team = await storage.getSlackTeam(teamId);
-        if (team && team.botToken) {
+        if (team && team.botToken && team.botToken.trim() !== "") {
           console.log(`🏢 Found team-specific bot token for team: ${teamId}`);
           console.log(`🔐 Token starts with: ${team.botToken.substring(0, 10)}...`);
           const client = new WebClient(team.botToken);
           this.clients.set(teamId, client);
           return client;
         } else {
-          console.log(`⚠️ No bot token found for team: ${teamId}`);
+          console.log(`⚠️ No valid bot token found for team: ${teamId}`);
         }
       } catch (error) {
         console.error("Failed to get team from database:", error);

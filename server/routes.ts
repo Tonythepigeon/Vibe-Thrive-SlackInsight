@@ -653,14 +653,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/slack/team/:teamId", async (req, res) => {
     try {
       const { teamId } = req.params;
-      console.log(`🗑️ Clearing database token for team: ${teamId}`);
+      console.log(`🗑️ Deleting team record to clear invalid token: ${teamId}`);
       
-      // Clear the team's bot token (but keep the team record)
+      // Delete the entire team record (will recreate on next OAuth)
       const team = await storage.getSlackTeam(teamId);
       if (team) {
+        // Update the team's bot token to empty string (avoid null constraint)
         await storage.updateSlackTeam(teamId, { 
-          botToken: null,
-          botUserId: null 
+          botToken: "",
+          botUserId: "" 
         });
         console.log(`✅ Cleared bot token for team ${teamId}`);
         
@@ -684,11 +685,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     } catch (error) {
-      console.error(`❌ Failed to clear token for team ${req.params.teamId}:`, error);
+      console.error(`❌ Failed to delete team record ${req.params.teamId}:`, error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       res.status(500).json({
         status: "error",
-        message: `Failed to clear token: ${errorMessage}`,
+        message: `Failed to delete team record: ${errorMessage}`,
         teamId: req.params.teamId,
         timestamp: new Date().toISOString()
       });
