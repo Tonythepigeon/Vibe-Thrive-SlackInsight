@@ -504,7 +504,7 @@ class SlackService {
   }
 
   // Command handlers
-  private async handleFocusCommand(text: string, userId: string, teamId: string) {
+  async handleFocusCommand(text: string, userId: string, teamId: string) {
     // Check if this is an "end" command
     if (text.trim().toLowerCase() === 'end') {
       return this.handleEndFocusCommand(userId, teamId);
@@ -734,7 +734,7 @@ class SlackService {
     };
   }
 
-  private async handleBreakCommand(text: string, userId: string, teamId: string) {
+  async handleBreakCommand(text: string, userId: string, teamId: string) {
     const breakType = text.toLowerCase() || "general";
     
     try {
@@ -861,7 +861,7 @@ class SlackService {
     };
   }
 
-  private async handleProductivityCommand(text: string, userId: string, teamId: string) {
+  async handleProductivityCommand(text: string, userId: string, teamId: string) {
     try {
       // Set a timeout for the entire operation
       const result = await Promise.race([
@@ -1415,12 +1415,16 @@ class SlackService {
 
     // Add action executed indicator if command was run
     if (response.commandExecuted) {
+      const statusText = response.executed 
+        ? "✅ _Command executed successfully_" 
+        : "❌ _Command failed to execute_";
+      
       blocks.push({
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: "✅ _Command executed successfully_"
+            text: statusText
           }
         ]
       });

@@ -20,6 +20,7 @@ interface AIResponse {
   commandExecuted?: boolean;
   commandResult?: any;
   recommendations?: string[];
+  executed?: boolean;
 }
 
 class AIService {
@@ -200,40 +201,100 @@ Rules:
     
     // Check if this is an end request
     if (intent.parameters && 'end' in intent.parameters) {
-      // Return command info without executing it directly
-      return {
-        command: 'focus',
-        action: 'end',
-        success: true
-      };
+      // Actually execute the end focus command
+      try {
+        const { slackService } = await import('./slack');
+        const result = await slackService.handleFocusCommand('end', userId, teamId);
+        return {
+          command: 'focus',
+          action: 'end',
+          success: true,
+          executed: true,
+          result
+        };
+      } catch (error) {
+        console.error("Failed to end focus session:", error);
+        return {
+          command: 'focus',
+          action: 'end',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
     }
     
-    // Start focus session
-    return {
-      command: 'focus',
-      action: 'start',
-      duration: duration,
-      success: true
-    };
+    // Start focus session - actually execute it
+    try {
+      const { slackService } = await import('./slack');
+      const result = await slackService.handleFocusCommand(duration.toString(), userId, teamId);
+      return {
+        command: 'focus',
+        action: 'start',
+        duration: duration,
+        success: true,
+        executed: true,
+        result
+      };
+    } catch (error) {
+      console.error("Failed to start focus session:", error);
+      return {
+        command: 'focus',
+        action: 'start',
+        duration: duration,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   private async executeBreakCommand(intent: CommandIntent, userId: string, teamId: string) {
     const breakType = intent.parameters?.breakType || 'general';
     
-    return {
-      command: 'break',
-      action: 'suggest',
-      breakType: breakType,
-      success: true
-    };
+    // Actually execute the break command
+    try {
+      const { slackService } = await import('./slack');
+      const result = await slackService.handleBreakCommand(breakType, userId, teamId);
+      return {
+        command: 'break',
+        action: 'suggest',
+        breakType: breakType,
+        success: true,
+        executed: true,
+        result
+      };
+    } catch (error) {
+      console.error("Failed to process break command:", error);
+      return {
+        command: 'break',
+        action: 'suggest',
+        breakType: breakType,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   private async executeProductivityCommand(userId: string, teamId: string) {
-    return {
-      command: 'productivity',
-      action: 'show',
-      success: true
-    };
+    // Actually execute the productivity command
+    try {
+      const { slackService } = await import('./slack');
+      const result = await slackService.handleProductivityCommand("", userId, teamId);
+      return {
+        command: 'productivity',
+        action: 'show',
+        success: true,
+        executed: true,
+        result
+      };
+    } catch (error) {
+      console.error("Failed to process productivity command:", error);
+      return {
+        command: 'productivity',
+        action: 'show',
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   private async generateResponse(
@@ -258,34 +319,41 @@ Keep it friendly and concise. Make them feel welcome!`;
       } else {
         // Generate specific responses based on the command
         let commandDescription = '';
+        let executionStatus = '';
+        
         if (commandResult?.command === 'focus') {
           if (commandResult?.action === 'start') {
-            commandDescription = `Starting a ${commandResult.duration}-minute focus session`;
+            commandDescription = `Started a ${commandResult.duration}-minute focus session`;
+            executionStatus = commandResult?.executed ? '✅ Successfully started!' : '❌ Failed to start';
           } else {
-            commandDescription = 'Ending your current focus session';
+            commandDescription = 'Ended your current focus session';
+            executionStatus = commandResult?.executed ? '✅ Successfully ended!' : '❌ Failed to end';
           }
         } else if (commandResult?.command === 'break') {
-          commandDescription = `Suggesting a ${commandResult.breakType} break`;
+          commandDescription = `Processed your ${commandResult.breakType} break request`;
+          executionStatus = commandResult?.executed ? '✅ Break suggestion ready!' : '❌ Failed to process';
         } else if (commandResult?.command === 'productivity') {
-          commandDescription = 'Showing your productivity metrics';
+          commandDescription = 'Generated your productivity metrics';
+          executionStatus = commandResult?.executed ? '✅ Metrics ready!' : '❌ Failed to generate';
         }
 
         responsePrompt = `Based on this user request and command execution, generate a helpful, friendly response.
 
 User's original message: "${originalMessage}"
 Command: ${commandDescription}
+Execution status: ${executionStatus}
 Command successful: ${commandResult?.success ? 'yes' : 'no'}
 
 Generate a response that:
 1. Acknowledges what the user wanted
-2. Explains what I'm going to do for them
+2. Confirms what I've done for them (since the command was actually executed)
 3. Provides 2-3 helpful tips or recommendations related to productivity
 4. Is warm, encouraging, and supportive
 5. Mentions that they can use slash commands for direct actions
 
 Keep it concise but helpful. Focus on productivity and wellness benefits.
 
-IMPORTANT: End your response with a brief mention of slash commands like: "You can also use /focus, /break, or /productivity for quick actions!"`;
+IMPORTANT: Since the command was actually executed, make sure to acknowledge that the action has been completed, not just suggested. End your response with a brief mention of slash commands like: "You can also use /focus, /break, or /productivity for quick actions!"`;
       }
 
       const response = await this.llm.invoke([
@@ -299,7 +367,8 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
         message: response.content as string,
         commandExecuted: !!commandResult,
         commandResult,
-        recommendations
+        recommendations,
+        executed: commandResult?.executed || false
       };
     } catch (error) {
       console.error("Response generation error:", error);
@@ -307,16 +376,17 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
       // Fallback response
       const fallbackMessages = {
         greeting: "Hello! I'm your productivity assistant. I can help you with focus sessions, breaks, and productivity tracking. How can I assist you today?",
-        focus: "I've started your focus session! Remember to eliminate distractions and set clear goals for maximum productivity.",
-        break: "Time for a well-deserved break! Stepping away helps maintain your energy and creativity throughout the day.",
-        productivity: "Here's your productivity summary! Regular tracking helps you understand your work patterns and optimize your schedule.",
+        focus: commandResult?.executed ? "✅ I've successfully started your focus session! Your Slack status has been updated and the timer is running. Stay focused and productive!" : "❌ I couldn't start your focus session. Please try using the `/focus` command directly.",
+        break: commandResult?.executed ? "✅ I've processed your break request! Check your DMs for personalized break suggestions and timing recommendations." : "❌ I couldn't process your break request. Please try using the `/break` command directly.",
+        productivity: commandResult?.executed ? "✅ I've generated your productivity metrics! Check your DMs for your detailed summary and insights." : "❌ I couldn't generate your productivity metrics. Please try using the `/productivity` command directly.",
         unsupported: "I'm here to help with productivity features like focus sessions, breaks, and metrics!"
       };
 
       return {
         message: fallbackMessages[intent.action],
         commandExecuted: !!commandResult,
-        commandResult
+        commandResult,
+        executed: commandResult?.executed || false
       };
     }
   }
@@ -335,25 +405,49 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
           break;
           
         case 'focus':
-          recommendations.push(
-            "Try the Pomodoro Technique: 25 minutes focused work, 5 minute break",
-            "Turn off notifications and close unnecessary browser tabs",
-            "Have water and snacks ready before starting your session"
-          );
+          if (commandResult?.executed) {
+            recommendations.push(
+              "Your focus session is now active! Try the Pomodoro Technique: 25 minutes focused work, 5 minute break",
+              "Turn off notifications and close unnecessary browser tabs",
+              "Have water and snacks ready before starting your session"
+            );
+          } else {
+            recommendations.push(
+              "Try using `/focus 25` to start a 25-minute focus session",
+              "Turn off notifications and close unnecessary browser tabs",
+              "Have water and snacks ready before starting your session"
+            );
+          }
           break;
           
         case 'break':
-          recommendations.push(
-            "Step away from your screen - even 5 minutes helps reset your mind",
-            "Try some light stretching or deep breathing exercises",
-            "Hydrate! Dehydration can significantly impact focus and energy"
-          );
+          if (commandResult?.executed) {
+            recommendations.push(
+              "Your break suggestion is ready! Step away from your screen - even 5 minutes helps reset your mind",
+              "Try some light stretching or deep breathing exercises",
+              "Hydrate! Dehydration can significantly impact focus and energy"
+            );
+          } else {
+            recommendations.push(
+              "Try using `/break` to get personalized break suggestions",
+              "Step away from your screen - even 5 minutes helps reset your mind",
+              "Try some light stretching or deep breathing exercises"
+            );
+          }
           break;
           
         case 'productivity':
-          // Generate dynamic recommendations based on user data
-          const dynamicRecs = await this.generateProductivityRecommendations(commandResult);
-          recommendations.push(...dynamicRecs);
+          if (commandResult?.executed) {
+            recommendations.push(
+              "Your productivity metrics have been generated! Check your DMs for the full report",
+              "Review your meeting patterns to identify optimization opportunities",
+              "Consider scheduling regular focus blocks in your calendar"
+            );
+          } else {
+            // Generate dynamic recommendations based on user data
+            const dynamicRecs = await this.generateProductivityRecommendations(commandResult);
+            recommendations.push(...dynamicRecs);
+          }
           break;
       }
     } catch (error) {
@@ -490,6 +584,23 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
           type: "mrkdwn",
           text: `💡 *Recommendations:*\n${response.recommendations.map(rec => `• ${rec}`).join('\n')}`
         }
+      });
+    }
+
+    // Add action executed indicator if command was run
+    if (response.commandExecuted) {
+      const statusText = response.executed 
+        ? "✅ _Command executed successfully_" 
+        : "❌ _Command failed to execute_";
+      
+      blocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: statusText
+          }
+        ]
       });
     }
 
