@@ -57,27 +57,111 @@ class SlackService {
         return res.json({ challenge });
       }
 
-      // Handle events
-      if (type === "event_callback" && event) {
-        await this.processSlackEvent(event);
-      }
-
+      // Immediately acknowledge the event to prevent Slack timeouts
       res.status(200).json({ ok: true });
+
+      // Handle events asynchronously after acknowledgment
+      if (type === "event_callback" && event) {
+        // Process the event asynchronously to avoid blocking the response
+        this.processSlackEvent(event).catch(error => {
+          console.error("Error processing Slack event:", error);
+        });
+      }
     } catch (error) {
       console.error("Slack event handling error:", error);
-      res.status(500).json({ error: "Failed to handle Slack event" });
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to handle Slack event" });
+      }
     }
   }
 
   // Handle slash commands
-  async handleSlashCommand(req: any, res: any) {
+  async handleSlackCommand(req: any, res: any) {
     try {
       const { command, text, user_id, team_id, channel_id } = req.body;
 
       // Verify request is from Slack (in production, verify signing secret)
       
-      let response;
+      // Send immediate acknowledgment for simple commands to prevent timeouts
+      const isSimpleCommand = this.isSimpleCommand(command, text);
       
+      if (isSimpleCommand) {
+        // For simple commands, process immediately and respond
+        let response;
+        
+        switch (command) {
+          case "/focus":
+            response = await this.handleFocusCommand(text, user_id, team_id);
+            break;
+          case "/break":
+            response = await this.handleBreakCommand(text, user_id, team_id);
+            break;
+          case "/productivity":
+            response = await this.handleProductivityCommand(text, user_id, team_id);
+            break;
+          default:
+            response = {
+              text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
+            };
+        }
+        
+        res.json(response);
+        return;
+      }
+      
+      // For complex commands that might take longer, send immediate acknowledgment
+      res.json({
+        response_type: "ephemeral",
+        text: "🤔 Processing your request...",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "🤔 *Processing your request...*\n\nI'm working on it! You'll see the full response shortly."
+            }
+          }
+        ]
+      });
+      
+      // Process the command asynchronously
+      this.processComplexSlashCommand(command, text, user_id, team_id, channel_id).catch(error => {
+        console.error("Error processing complex slash command:", error);
+      });
+      
+    } catch (error) {
+      console.error("Slash command error:", error);
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Command failed" });
+      }
+    }
+  }
+
+  // Keep the old method name for backward compatibility
+  async handleSlashCommand(req: any, res: any) {
+    return this.handleSlackCommand(req, res);
+  }
+
+  private isSimpleCommand(command: string, text: string): boolean {
+    // Simple commands are those that don't require AI processing or complex operations
+    if (!text || text.trim().length === 0) {
+      return true; // Commands without text are simple
+    }
+    
+    // Simple patterns that don't need AI
+    const simplePatterns = [
+      /^\d+$/, // Just numbers like "25"
+      /^(end|stop)$/i, // Simple commands like "end"
+      /^(general|hydration|stretch|meditation|walk)$/i, // Simple break types
+    ];
+    
+    return simplePatterns.some(pattern => pattern.test(text.trim()));
+  }
+
+  private async processComplexSlashCommand(command: string, text: string, user_id: string, team_id: string, channel_id: string): Promise<void> {
+    try {
       // Check if we should use AI for natural language processing
       const shouldUseAI = await this.shouldUseAIForSlashCommand(command, text);
       
@@ -91,14 +175,13 @@ class SlackService {
             const aiPrompt = this.createAIPromptFromSlashCommand(command, text);
             const aiResponse = await aiService.processUserMessage(aiPrompt, user_id, team_id);
             
-            // Format AI response for Slack
-            response = {
-              response_type: "ephemeral",
+            // Send the AI response as a DM to avoid cluttering the channel
+            const client = await this.getClient(team_id);
+            await client.chat.postMessage({
+              channel: user_id, // Send as DM
               text: aiResponse.message,
               blocks: this.formatAIResponseBlocks(aiResponse)
-            };
-            
-            res.json(response);
+            });
             return;
           }
         } catch (error) {
@@ -106,7 +189,8 @@ class SlackService {
         }
       }
       
-      // Fallback to traditional command handling
+      // Fallback to traditional command handling for complex commands
+      let response: any;
       switch (command) {
         case "/focus":
           response = await this.handleFocusCommand(text, user_id, team_id);
@@ -123,10 +207,25 @@ class SlackService {
           };
       }
 
-      res.json(response);
+      // Send the response as a DM
+      const client = await this.getClient(team_id);
+      await client.chat.postMessage({
+        channel: user_id, // Send as DM
+        text: response.text || response.response_type || "Command processed",
+        blocks: response.blocks || []
+      });
     } catch (error) {
-      console.error("Slash command error:", error);
-      res.status(500).json({ error: "Command failed" });
+      console.error("Error in processComplexSlashCommand:", error);
+      // Try to send error message as DM
+      try {
+        const client = await this.getClient(team_id);
+        await client.chat.postMessage({
+          channel: user_id,
+          text: "❌ Sorry, there was an error processing your command. Please try again."
+        });
+      } catch (dmError) {
+        console.error("Failed to send error DM:", dmError);
+      }
     }
   }
 
@@ -178,6 +277,26 @@ class SlackService {
 
       console.log(`Interactivity payload: type=${type}, user=${user?.id}, actions=${JSON.stringify(actions?.map((a: any) => ({action_id: a.action_id, value: a.value})))}`);
 
+      // Send immediate acknowledgment to prevent Slack timeouts
+      res.json({ response_action: "clear" });
+
+      // Process the interaction asynchronously
+      this.processInteractivityAsync(payload).catch(error => {
+        console.error("Error processing interactivity:", error);
+      });
+    } catch (error) {
+      console.error("Interactivity error:", error);
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Interaction failed" });
+      }
+    }
+  }
+
+  private async processInteractivityAsync(payload: any): Promise<void> {
+    try {
+      const { type, user, team, actions } = payload;
+
       let response;
       switch (type) {
         case "block_actions":
@@ -193,11 +312,26 @@ class SlackService {
           response = { response_action: "clear" };
       }
 
-      console.log(`Sending interactivity response:`, JSON.stringify(response, null, 2));
-      res.json(response);
+      console.log(`Processed interactivity response:`, JSON.stringify(response, null, 2));
+      
+      // If we have a response that needs to be sent, send it as a DM
+      if (response && user) {
+        const responseAny = response as any;
+        if (responseAny.text || responseAny.blocks) {
+          try {
+            const client = await this.getClient(team?.id);
+            await client.chat.postMessage({
+              channel: user.id,
+              text: responseAny.text || "Action completed",
+              blocks: responseAny.blocks || []
+            });
+          } catch (dmError) {
+            console.error("Failed to send interactivity response DM:", dmError);
+          }
+        }
+      }
     } catch (error) {
-      console.error("Interactivity error:", error);
-      res.status(500).json({ error: "Interaction failed" });
+      console.error("Error in processInteractivityAsync:", error);
     }
   }
 
@@ -1326,6 +1460,9 @@ class SlackService {
 
   private async handleDirectMessage(event: any) {
     try {
+      // Send immediate acknowledgment to prevent Slack timeouts
+      // For DMs, we can't send an immediate response, but we can process quickly
+      
       // Use AI service for intelligent DM responses
       const { aiService } = await import('./ai');
       const isAIHealthy = await aiService.isHealthy();

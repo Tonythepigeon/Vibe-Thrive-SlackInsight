@@ -419,6 +419,41 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
         return;
       }
 
+      // Send immediate acknowledgment to prevent Slack timeouts
+      const client = await (slackService as any).getClient(team);
+      await client.chat.postMessage({
+        channel: channel,
+        text: "🤔 Processing your request...",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "🤔 *Processing your request...*\n\nI'm working on it! You'll see the full response shortly."
+            }
+          }
+        ]
+      });
+
+      // Process the user's message asynchronously
+      this.processAIMentionAsync(cleanText, user, team, channel).catch(error => {
+        console.error("Error processing AI mention:", error);
+        // Send error message if processing fails
+        client.chat.postMessage({
+          channel: channel,
+          text: "❌ Sorry, there was an error processing your request. Please try again."
+        }).catch((dmError: any) => {
+          console.error("Failed to send error message:", dmError);
+        });
+      });
+
+    } catch (error) {
+      console.error("AI mention handling error:", error);
+    }
+  }
+
+  private async processAIMentionAsync(cleanText: string, user: string, team: string, channel: string): Promise<void> {
+    try {
       // Process the user's message
       const response = await this.processUserMessage(cleanText, user, team);
       
@@ -429,9 +464,9 @@ IMPORTANT: End your response with a brief mention of slash commands like: "You c
         text: response.message,
         blocks: this.formatResponseBlocks(response)
       });
-
     } catch (error) {
-      console.error("AI mention handling error:", error);
+      console.error("Error in processAIMentionAsync:", error);
+      throw error; // Re-throw to be caught by the caller
     }
   }
 
