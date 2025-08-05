@@ -100,6 +100,12 @@ Rules:
       // Parse user intent
       const intent = await this.parseIntent(userMessage);
       
+      // Special handling for greetings - even with low confidence, treat as greeting if it looks like one
+      if (intent.action === 'greeting' || (intent.confidence < 0.7 && this.isGreeting(userMessage))) {
+        intent.action = 'greeting';
+        intent.confidence = 0.9;
+      }
+      
       // Handle unsupported requests
       if (intent.action === 'unsupported' || intent.confidence < 0.7) {
         return {
@@ -445,6 +451,25 @@ Keep it concise but helpful. Focus on productivity and wellness benefits.`;
     }
 
     return blocks;
+  }
+
+  // Simple greeting detection method
+  private isGreeting(message: string): boolean {
+    const greetingPatterns = [
+      /^hi\b/i,
+      /^hello\b/i,
+      /^hey\b/i,
+      /^good\s+(morning|afternoon|evening)\b/i,
+      /^how\s+are\s+you\b/i,
+      /^what's\s+up\b/i,
+      /^sup\b/i,
+      /^yo\b/i,
+      /^greetings\b/i,
+      /^good\s+day\b/i
+    ];
+    
+    const cleanMessage = message.trim().toLowerCase();
+    return greetingPatterns.some(pattern => pattern.test(cleanMessage));
   }
 
   // Health check method
