@@ -176,6 +176,11 @@ class SlackService {
   }
 
   private isSimpleCommand(command: string, text: string): boolean {
+    // /test command is always simple
+    if (command === "/test") {
+      return true;
+    }
+    
     // Simple commands are those that don't require AI processing or complex operations
     if (!text || text.trim().length === 0) {
       return true; // Commands without text are simple
