@@ -74,7 +74,7 @@ export const focusSessions = pgTable("focus_sessions", {
   duration: integer("duration").notNull(), // in minutes
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time"),
-  status: text("status").default("active"), // 'active', 'completed', 'interrupted'
+  status: text("status").default("active"), // 'active', 'completed', 'interrupted', 'scheduled', 'cancelled'
   slackStatusSet: boolean("slack_status_set").default(false),
   createdAt: timestamp("created_at").default(sql`now()`),
 });

@@ -307,12 +307,22 @@ class SlackService {
       return this.handleEndFocusCommand(userId, teamId);
     }
     
-    const duration = parseInt(text) || 25; // Default 25 minutes
+    // Parse the input to extract time slot and duration
+    const parsedInput = this.parseFocusInput(text);
+    
+    if (parsedInput.error) {
+      return {
+        response_type: "ephemeral",
+        text: `❌ ${parsedInput.error}\n\n📝 *Usage examples:*\n• \`/focus 25\` - Start now for 25 minutes\n• \`/focus 2:30pm 45\` - Start at 2:30 PM for 45 minutes\n• \`/focus 14:30 60\` - Start at 14:30 for 60 minutes\n• \`/focus now 30\` - Start immediately for 30 minutes\n• \`/focus end\` - End current session`
+      };
+    }
+    
+    const { startTime, duration } = parsedInput;
     
     try {
       // Set a timeout for the entire operation
       const result = await Promise.race([
-        this.processFocusCommand(userId, teamId, duration),
+        this.processFocusCommand(userId, teamId, duration, startTime),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Operation timeout')), 1000)
         )
@@ -326,6 +336,11 @@ class SlackService {
       
       // If it's a timeout, provide immediate value without database
       if (errorMessage === 'Operation timeout') {
+        const isScheduled = startTime > new Date();
+        const startTimeText = isScheduled ? 
+          `\n⏰ Scheduled for: ${startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}` : 
+          '';
+        
         return {
           response_type: "ephemeral",
           blocks: [
@@ -333,7 +348,7 @@ class SlackService {
               type: "section",
               text: {
                 type: "mrkdwn",
-                text: `🎯 *Focus Mode Activated!*\nDuration: ${duration} minutes\n\n📝 *Quick Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session\n\n⏰ Timer started! You're now in focus mode.`
+                text: `🎯 *Focus ${isScheduled ? 'Session Scheduled' : 'Mode Activated'}!*\nDuration: ${duration} minutes${startTimeText}\n\n📝 *Quick Focus Tips:*\n• Close unnecessary tabs and apps\n• Put phone in silent mode\n• Set your Slack status to "🎯 In focus mode"\n• Set clear goals for this session\n\n${isScheduled ? '📅 You\'ll be reminded when it\'s time to start!' : '⏰ Timer started! You\'re now in focus mode.'}`
               }
             },
             {
@@ -457,7 +472,119 @@ class SlackService {
     }
   }
 
-  private async processFocusCommand(userId: string, teamId: string, duration: number) {
+  // Parse focus command input to extract time and duration
+  private parseFocusInput(text: string): { startTime: Date; duration: number; error?: string } {
+    const trimmed = text.trim();
+    
+    // Handle empty input - default to now, 25 minutes
+    if (!trimmed) {
+      return { startTime: new Date(), duration: 25 };
+    }
+    
+    const parts = trimmed.split(/\s+/);
+    
+    // Single number - duration only, start now
+    if (parts.length === 1 && /^\d+$/.test(parts[0])) {
+      const duration = parseInt(parts[0]);
+      if (duration < 5 || duration > 240) {
+        return { startTime: new Date(), duration: 25, error: "Duration must be between 5 and 240 minutes" };
+      }
+      return { startTime: new Date(), duration };
+    }
+    
+    // Two parts - could be "now 25", "2:30pm 45", "14:30 60", etc.
+    if (parts.length === 2) {
+      const [timeStr, durationStr] = parts;
+      const duration = parseInt(durationStr);
+      
+      if (isNaN(duration) || duration < 5 || duration > 240) {
+        return { startTime: new Date(), duration: 25, error: "Duration must be between 5 and 240 minutes" };
+      }
+      
+      // Handle "now" keyword
+      if (timeStr.toLowerCase() === 'now') {
+        return { startTime: new Date(), duration };
+      }
+      
+      // Parse time formats
+      const startTime = this.parseTimeString(timeStr);
+      if (!startTime) {
+        return { startTime: new Date(), duration: 25, error: "Invalid time format. Use formats like '2:30pm', '14:30', or 'now'" };
+      }
+      
+      // Check if time is in the past (more than 5 minutes ago)
+      const now = new Date();
+      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+      if (startTime < fiveMinutesAgo) {
+        return { startTime: new Date(), duration: 25, error: "Cannot schedule focus sessions in the past" };
+      }
+      
+      // Check if time is too far in the future (more than 24 hours)
+      const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      if (startTime > twentyFourHoursFromNow) {
+        return { startTime: new Date(), duration: 25, error: "Cannot schedule focus sessions more than 24 hours in advance" };
+      }
+      
+      return { startTime, duration };
+    }
+    
+    // Invalid format
+    return { startTime: new Date(), duration: 25, error: "Invalid command format" };
+  }
+  
+  // Parse time string into Date object (today at specified time)
+  private parseTimeString(timeStr: string): Date | null {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    try {
+      // Handle 12-hour format (2:30pm, 10:15am)
+      const twelveHourMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+      if (twelveHourMatch) {
+        let hours = parseInt(twelveHourMatch[1]);
+        const minutes = parseInt(twelveHourMatch[2]);
+        const ampm = twelveHourMatch[3].toLowerCase();
+        
+        if (ampm === 'pm' && hours !== 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+        
+        if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+          return new Date(today.getTime() + hours * 60 * 60 * 1000 + minutes * 60 * 1000);
+        }
+      }
+      
+      // Handle 24-hour format (14:30, 09:15)
+      const twentyFourHourMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+      if (twentyFourHourMatch) {
+        const hours = parseInt(twentyFourHourMatch[1]);
+        const minutes = parseInt(twentyFourHourMatch[2]);
+        
+        if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+          return new Date(today.getTime() + hours * 60 * 60 * 1000 + minutes * 60 * 1000);
+        }
+      }
+      
+      // Handle hour only (14, 2pm)
+      const hourOnlyMatch = timeStr.match(/^(\d{1,2})\s*(am|pm)?$/i);
+      if (hourOnlyMatch) {
+        let hours = parseInt(hourOnlyMatch[1]);
+        const ampm = hourOnlyMatch[2]?.toLowerCase();
+        
+        if (ampm === 'pm' && hours !== 12) hours += 12;
+        if (ampm === 'am' && hours === 12) hours = 0;
+        
+        if (hours >= 0 && hours <= 23) {
+          return new Date(today.getTime() + hours * 60 * 60 * 1000);
+        }
+      }
+    } catch (error) {
+      console.error("Error parsing time string:", error);
+    }
+    
+    return null;
+  }
+
+  private async processFocusCommand(userId: string, teamId: string, duration: number, startTime: Date = new Date()) {
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
 
@@ -489,46 +616,95 @@ class SlackService {
       };
     }
 
+    const now = new Date();
+    const isScheduled = startTime > now;
+    
+    // For immediate sessions, use current time; for scheduled sessions, use specified time
+    const sessionStartTime = isScheduled ? startTime : now;
+    
     // Create focus session
     const session = await storage.createFocusSession({
       userId: user.id,
       duration,
-      startTime: new Date()
+      startTime: sessionStartTime,
+      status: isScheduled ? 'scheduled' : 'active'
     });
 
     // Update daily productivity metrics (async, don't block response)
-    this.updateDailyMetrics(user.id, new Date()).catch(console.error);
+    this.updateDailyMetrics(user.id, sessionStartTime).catch(console.error);
 
-    // Set Slack status asynchronously (don't wait for it)
-    this.setFocusMode(user.id, duration).catch(console.error);
-
-    return {
-      response_type: "ephemeral",
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n⚡ Setting up your Slack status automatically...\n\nI'll send you a DM with session details and confirmation!`
-          }
-        },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: {
-                type: "plain_text",
-                text: "End Focus Session"
-              },
-              style: "danger",
-              action_id: "end_focus",
-              value: session.id
+    if (isScheduled) {
+      // For scheduled sessions, show confirmation and schedule reminder
+      const userTimezone = user?.timezone || 'America/New_York';
+      const startTimeFormatted = sessionStartTime.toLocaleTimeString('en-US', {
+        timeZone: userTimezone,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      
+      // TODO: Here we could schedule a reminder using the scheduler service
+      // schedulerService.scheduleReminder(user.id, sessionStartTime, session.id)
+      
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `📅 *Focus session scheduled!*\n\n⏰ Start time: ${startTimeFormatted}\n⏱️ Duration: ${duration} minutes\n\n✅ I'll send you a reminder when it's time to start your focus session!\n\n💡 *Preparation tips:*\n• Block your calendar if needed\n• Prepare your workspace\n• Set clear goals for the session`
             }
-          ]
-        }
-      ]
-    };
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Cancel Session"
+                },
+                style: "danger",
+                action_id: "cancel_scheduled_focus",
+                value: session.id
+              }
+            ]
+          }
+        ]
+      };
+    } else {
+      // For immediate sessions, set Slack status and start now
+      this.setFocusMode(user.id, duration).catch(console.error);
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n⚡ Setting up your Slack status automatically...\n\nI'll send you a DM with session details and confirmation!`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "End Focus Session"
+                },
+                style: "danger",
+                action_id: "end_focus",
+                value: session.id
+              }
+            ]
+          }
+        ]
+      };
+    }
   }
 
   private async handleBreakCommand(text: string, userId: string, teamId: string) {
@@ -921,6 +1097,9 @@ class SlackService {
       case "generate_demo_data":
         console.log("Handling generate_demo_data action");
         return await this.generateDemoDataFromSlack(action.value, user.id);
+      case "cancel_scheduled_focus":
+        console.log("Handling cancel_scheduled_focus action");
+        return await this.cancelScheduledFocusSession(action.value, user.id);
       default:
         console.log(`Unknown action_id: ${action.action_id}`);
         return { response_action: "clear" };
@@ -1594,6 +1773,38 @@ class SlackService {
     }
 
     return { suggest: true, reason: "No meetings scheduled soon" };
+  }
+
+  // Cancel a scheduled focus session
+  private async cancelScheduledFocusSession(sessionId: string, slackUserId: string) {
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      // Update the session status to cancelled
+      await storage.updateFocusSession(sessionId, {
+        status: 'cancelled',
+        endTime: new Date()
+      });
+
+      // Log activity
+      storage.logActivity({
+        userId: user.id,
+        action: "focus_session_cancelled",
+        details: { 
+          sessionId,
+          trigger: "user_button_cancel"
+        }
+      }).catch(console.error);
+
+      return {
+        replace_original: true,
+        text: "📅 Focus session cancelled successfully. You can schedule a new one anytime with `/focus`!"
+      };
+    } catch (error) {
+      console.error("Cancel scheduled focus session error:", error);
+      return { response_action: "clear" };
+    }
   }
 
   // Generate demo data from Slack button

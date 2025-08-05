@@ -407,7 +407,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </div>
           
           <p>You can now return to Slack and try the following commands:</p>
-          <p><strong>/focus 25</strong> - Start a focus session with automatic status updates<br>
+          <p><strong>/focus 25</strong> - Start a 25-minute focus session now<br>
+          <strong>/focus 2:30pm 45</strong> - Schedule a 45-minute session for 2:30 PM<br>
+          <strong>/focus 14:30 60</strong> - Schedule a 60-minute session for 14:30<br>
           <strong>/break</strong> - Get a personalized break suggestion<br>
           <strong>/productivity</strong> - View your productivity metrics</p>
           
