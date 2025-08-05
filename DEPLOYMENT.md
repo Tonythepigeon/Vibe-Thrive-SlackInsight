@@ -7,6 +7,15 @@
    - [Render.com](https://render.com)
    - [Neon Database](https://neon.tech) (for PostgreSQL)
 
+## AI Service Setup (Optional)
+
+### 1. Get Google AI API Key
+For natural language processing features:
+1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Create a new API key
+3. Copy the key and add it as `GOOGLE_API_KEY` environment variable
+4. This enables intelligent Slack bot responses and natural language command processing
+
 ## Database Setup
 
 ### 1. Create Neon Database
@@ -43,6 +52,11 @@ SLACK_SIGNING_SECRET=your_slack_signing_secret
 ```
 SLACK_BOT_TOKEN=your_bot_token
 SLACK_CHANNEL_ID=your_channel_id
+```
+
+#### AI Service Variables (for natural language processing)
+```
+GOOGLE_API_KEY=your_google_ai_api_key
 ```
 
 #### Database

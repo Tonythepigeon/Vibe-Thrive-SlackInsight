@@ -57,26 +57,140 @@ class SlackService {
         return res.json({ challenge });
       }
 
-      // Handle events
-      if (type === "event_callback" && event) {
-        await this.processSlackEvent(event);
-      }
-
+      // Immediately acknowledge the event to prevent Slack timeouts
       res.status(200).json({ ok: true });
+
+      // Handle events asynchronously after acknowledgment
+      if (type === "event_callback" && event) {
+        // Process the event asynchronously to avoid blocking the response
+        this.processSlackEvent(event).catch(error => {
+          console.error("Error processing Slack event:", error);
+        });
+      }
     } catch (error) {
       console.error("Slack event handling error:", error);
-      res.status(500).json({ error: "Failed to handle Slack event" });
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to handle Slack event" });
+      }
     }
   }
 
   // Handle slash commands
-  async handleSlashCommand(req: any, res: any) {
+  async handleSlackCommand(req: any, res: any) {
     try {
       const { command, text, user_id, team_id, channel_id } = req.body;
 
       // Verify request is from Slack (in production, verify signing secret)
       
-      let response;
+      // Send immediate acknowledgment for simple commands to prevent timeouts
+      const isSimpleCommand = this.isSimpleCommand(command, text);
+      
+      if (isSimpleCommand) {
+        // For simple commands, process immediately and respond
+        let response;
+        
+        switch (command) {
+          case "/focus":
+            response = await this.handleFocusCommand(text, user_id, team_id);
+            break;
+          case "/break":
+            response = await this.handleBreakCommand(text, user_id, team_id);
+            break;
+          case "/productivity":
+            response = await this.handleProductivityCommand(text, user_id, team_id);
+            break;
+          default:
+            response = {
+              text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
+            };
+        }
+        
+        res.json(response);
+        return;
+      }
+      
+      // For complex commands that might take longer, send immediate acknowledgment
+      res.json({
+        response_type: "ephemeral",
+        text: "🤔 Processing your request...",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "🤔 *Processing your request...*\n\nI'm working on it! You'll see the full response shortly."
+            }
+          }
+        ]
+      });
+      
+      // Process the command asynchronously
+      this.processComplexSlashCommand(command, text, user_id, team_id, channel_id).catch(error => {
+        console.error("Error processing complex slash command:", error);
+      });
+      
+    } catch (error) {
+      console.error("Slash command error:", error);
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Command failed" });
+      }
+    }
+  }
+
+  // Keep the old method name for backward compatibility
+  async handleSlashCommand(req: any, res: any) {
+    return this.handleSlackCommand(req, res);
+  }
+
+  private isSimpleCommand(command: string, text: string): boolean {
+    // Simple commands are those that don't require AI processing or complex operations
+    if (!text || text.trim().length === 0) {
+      return true; // Commands without text are simple
+    }
+    
+    // Simple patterns that don't need AI
+    const simplePatterns = [
+      /^\d+$/, // Just numbers like "25"
+      /^(end|stop)$/i, // Simple commands like "end"
+      /^(general|hydration|stretch|meditation|walk)$/i, // Simple break types
+    ];
+    
+    return simplePatterns.some(pattern => pattern.test(text.trim()));
+  }
+
+  private async processComplexSlashCommand(command: string, text: string, user_id: string, team_id: string, channel_id: string): Promise<void> {
+    try {
+      // Check if we should use AI for natural language processing
+      const shouldUseAI = await this.shouldUseAIForSlashCommand(command, text);
+      
+      if (shouldUseAI) {
+        try {
+          const { aiService } = await import('./ai');
+          const isAIHealthy = await aiService.isHealthy();
+          
+          if (isAIHealthy) {
+            // Create a natural language prompt for the AI
+            const aiPrompt = this.createAIPromptFromSlashCommand(command, text);
+            const aiResponse = await aiService.processUserMessage(aiPrompt, user_id, team_id);
+            
+            // Send the AI response as a DM to avoid cluttering the channel
+            const client = await this.getClient(team_id);
+            await client.chat.postMessage({
+              channel: user_id, // Send as DM
+              text: aiResponse.message,
+              blocks: this.formatAIResponseBlocks(aiResponse)
+            });
+            return;
+          }
+        } catch (error) {
+          console.error("AI processing failed for slash command, falling back:", error);
+        }
+      }
+      
+      // Fallback to traditional command handling for complex commands
+      let response: any;
       switch (command) {
         case "/focus":
           response = await this.handleFocusCommand(text, user_id, team_id);
@@ -89,15 +203,69 @@ class SlackService {
           break;
         default:
           response = {
-            text: "Unknown command. Available commands: /focus, /break, /productivity"
+            text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
           };
       }
 
-      res.json(response);
+      // Send the response as a DM
+      const client = await this.getClient(team_id);
+      await client.chat.postMessage({
+        channel: user_id, // Send as DM
+        text: response.text || response.response_type || "Command processed",
+        blocks: response.blocks || []
+      });
     } catch (error) {
-      console.error("Slash command error:", error);
-      res.status(500).json({ error: "Command failed" });
+      console.error("Error in processComplexSlashCommand:", error);
+      // Try to send error message as DM
+      try {
+        const client = await this.getClient(team_id);
+        await client.chat.postMessage({
+          channel: user_id,
+          text: "❌ Sorry, there was an error processing your command. Please try again."
+        });
+      } catch (dmError) {
+        console.error("Failed to send error DM:", dmError);
+      }
     }
+  }
+
+  private shouldUseAIForSlashCommand(command: string, text: string): boolean {
+    // Use AI if the text contains natural language patterns rather than simple parameters
+    if (!text || text.trim().length === 0) {
+      return false;
+    }
+    
+    // Skip AI for simple numeric inputs or standard parameters
+    const simplePatterns = [
+      /^\d+$/, // Just numbers like "25"
+      /^(end|stop)$/i, // Simple commands like "end"
+      /^(general|hydration|stretch|meditation|walk)$/i, // Simple break types
+    ];
+    
+    if (simplePatterns.some(pattern => pattern.test(text.trim()))) {
+      return false;
+    }
+    
+    // Use AI for natural language inputs
+    const naturalLanguageIndicators = [
+      'please', 'can you', 'i need', 'i want', 'help me', 'show me',
+      'minutes', 'session', 'time', 'quick', 'long', 'short',
+      'coffee', 'tired', 'stressed', 'focused', 'productive'
+    ];
+    
+    const lowerText = text.toLowerCase();
+    return naturalLanguageIndicators.some(indicator => lowerText.includes(indicator));
+  }
+
+  private createAIPromptFromSlashCommand(command: string, text: string): string {
+    const commandMap: Record<string, string> = {
+      '/focus': 'start a focus session',
+      '/break': 'suggest a break',
+      '/productivity': 'show my productivity metrics'
+    };
+    
+    const baseCommand = commandMap[command] || command;
+    return `${baseCommand} ${text}`.trim();
   }
 
   // Handle interactive components (buttons, modals, etc.)
@@ -108,6 +276,26 @@ class SlackService {
       const { type, user, team, actions } = payload;
 
       console.log(`Interactivity payload: type=${type}, user=${user?.id}, actions=${JSON.stringify(actions?.map((a: any) => ({action_id: a.action_id, value: a.value})))}`);
+
+      // Send immediate acknowledgment to prevent Slack timeouts
+      res.json({ response_action: "clear" });
+
+      // Process the interaction asynchronously
+      this.processInteractivityAsync(payload).catch(error => {
+        console.error("Error processing interactivity:", error);
+      });
+    } catch (error) {
+      console.error("Interactivity error:", error);
+      // Only send error response if we haven't already sent a response
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Interaction failed" });
+      }
+    }
+  }
+
+  private async processInteractivityAsync(payload: any): Promise<void> {
+    try {
+      const { type, user, team, actions } = payload;
 
       let response;
       switch (type) {
@@ -124,11 +312,26 @@ class SlackService {
           response = { response_action: "clear" };
       }
 
-      console.log(`Sending interactivity response:`, JSON.stringify(response, null, 2));
-      res.json(response);
+      console.log(`Processed interactivity response:`, JSON.stringify(response, null, 2));
+      
+      // If we have a response that needs to be sent, send it as a DM
+      if (response && user) {
+        const responseAny = response as any;
+        if (responseAny.text || responseAny.blocks) {
+          try {
+            const client = await this.getClient(team?.id);
+            await client.chat.postMessage({
+              channel: user.id,
+              text: responseAny.text || "Action completed",
+              blocks: responseAny.blocks || []
+            });
+          } catch (dmError) {
+            console.error("Failed to send interactivity response DM:", dmError);
+          }
+        }
+      }
     } catch (error) {
-      console.error("Interactivity error:", error);
-      res.status(500).json({ error: "Interaction failed" });
+      console.error("Error in processInteractivityAsync:", error);
     }
   }
 
@@ -301,7 +504,7 @@ class SlackService {
   }
 
   // Command handlers
-  private async handleFocusCommand(text: string, userId: string, teamId: string) {
+  async handleFocusCommand(text: string, userId: string, teamId: string) {
     // Check if this is an "end" command
     if (text.trim().toLowerCase() === 'end') {
       return this.handleEndFocusCommand(userId, teamId);
@@ -707,7 +910,7 @@ class SlackService {
     }
   }
 
-  private async handleBreakCommand(text: string, userId: string, teamId: string) {
+  async handleBreakCommand(text: string, userId: string, teamId: string) {
     const breakType = text.toLowerCase() || "general";
     
     try {
@@ -834,7 +1037,7 @@ class SlackService {
     };
   }
 
-  private async handleProductivityCommand(text: string, userId: string, teamId: string) {
+  async handleProductivityCommand(text: string, userId: string, teamId: string) {
     try {
       // Set a timeout for the entire operation
       const result = await Promise.race([
@@ -1100,6 +1303,21 @@ class SlackService {
       case "cancel_scheduled_focus":
         console.log("Handling cancel_scheduled_focus action");
         return await this.cancelScheduledFocusSession(action.value, user.id);
+      case "start_focus_25":
+        console.log("Handling start_focus_25 action");
+        return await this.handleQuickFocusSession(user.id, team.id, 25);
+      case "start_focus_45":
+        console.log("Handling start_focus_45 action");
+        return await this.handleQuickFocusSession(user.id, team.id, 45);
+      case "suggest_break_coffee":
+        console.log("Handling suggest_break_coffee action");
+        return await this.handleQuickBreakSuggestion(user.id, team.id, "hydration");
+      case "suggest_break_stretch":
+        console.log("Handling suggest_break_stretch action");
+        return await this.handleQuickBreakSuggestion(user.id, team.id, "stretch");
+      case "show_productivity":
+        console.log("Handling show_productivity action");
+        return await this.handleQuickProductivitySummary(user.id, team.id);
       default:
         console.log(`Unknown action_id: ${action.action_id}`);
         return { response_action: "clear" };
@@ -1109,6 +1327,85 @@ class SlackService {
   private async handleViewSubmission(payload: any) {
     // Handle modal submissions
     return { response_action: "clear" };
+  }
+
+  // Quick action handlers for interactive buttons
+  private async handleQuickFocusSession(slackUserId: string, teamId: string, duration: number) {
+    try {
+      const response = await this.handleFocusCommand(duration.toString(), slackUserId, teamId);
+      const responseData = response as any;
+      return {
+        replace_original: true,
+        text: `🎯 Started ${duration}-minute focus session!`,
+        blocks: responseData.blocks || [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `🎯 *${duration}-minute focus session started!*\n\nYour Slack status will be updated automatically. Stay focused! 💪`
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Quick focus session error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to start focus session. Please try using `/focus` command instead."
+      };
+    }
+  }
+
+  private async handleQuickBreakSuggestion(slackUserId: string, teamId: string, breakType: string) {
+    try {
+      const response = await this.handleBreakCommand(breakType, slackUserId, teamId);
+      const responseData = response as any;
+      return {
+        replace_original: true,
+        text: `☕ ${breakType} break suggestion ready!`,
+        blocks: responseData.blocks || [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `☕ *${breakType === 'hydration' ? 'Coffee' : 'Stretch'} break time!*\n\nTake a moment to refresh yourself. You've earned it! 🌟`
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Quick break suggestion error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to process break suggestion. Please try using `/break` command instead."
+      };
+    }
+  }
+
+  private async handleQuickProductivitySummary(slackUserId: string, teamId: string) {
+    try {
+      const response = await this.handleProductivityCommand("", slackUserId, teamId);
+      const responseData = response as any;
+      return {
+        replace_original: true,
+        text: "📊 Here's your productivity summary!",
+        blocks: responseData.blocks || [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "📊 *Productivity Summary*\n\nYour detailed metrics are being prepared..."
+            }
+          }
+        ]
+      };
+    } catch (error) {
+      console.error("Quick productivity summary error:", error);
+      return {
+        replace_original: true,
+        text: "❌ Failed to load productivity summary. Please try using `/productivity` command instead."
+      };
+    }
   }
 
   private async endFocusSession(sessionId: string, slackUserId: string) {
@@ -1272,36 +1569,304 @@ class SlackService {
     }
   }
 
+  private formatAIResponseBlocks(response: any): any[] {
+    const blocks: any[] = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: response.message
+        }
+      }
+    ];
+
+    // Add recommendations if available
+    if (response.recommendations && response.recommendations.length > 0) {
+      blocks.push({ type: "divider" });
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `💡 *Recommendations:*\n${response.recommendations.map((rec: string) => `• ${rec}`).join('\n')}`
+        }
+      });
+    }
+
+    // Add action executed indicator if command was run
+    if (response.commandExecuted) {
+      const statusText = response.executed 
+        ? "✅ _Command executed successfully_" 
+        : "❌ _Command failed to execute_";
+      
+      blocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: statusText
+          }
+        ]
+      });
+    }
+
+    return blocks;
+  }
+
   private async processSlackEvent(event: any) {
     switch (event.type) {
       case "app_mention":
         await this.handleAppMention(event);
         break;
       case "message":
-        if (event.text && event.text.includes("break")) {
-          await this.handleBreakRequest(event);
-        }
+        await this.handleMessage(event);
         break;
     }
   }
 
+  private async handleMessage(event: any) {
+    // Skip bot messages and messages without text
+    if (event.bot_id || !event.text || event.subtype) {
+      return;
+    }
+
+    // Check if this is a direct message (DM) to the bot
+    const isDM = event.channel_type === 'im' || event.channel.startsWith('D');
+    
+    if (isDM) {
+      // Handle direct messages with AI processing
+      await this.handleDirectMessage(event);
+    } else {
+      // Handle channel messages (legacy keyword-based for now)
+      await this.handleChannelMessage(event);
+    }
+  }
+
+  private async handleDirectMessage(event: any) {
+    try {
+      // Send immediate acknowledgment to prevent Slack timeouts
+      // For DMs, we can't send an immediate response, but we can process quickly
+      
+      // Use AI service for intelligent DM responses
+      const { aiService } = await import('./ai');
+      const isAIHealthy = await aiService.isHealthy();
+      
+      if (isAIHealthy) {
+        // Process the message with AI
+        const response = await aiService.processUserMessage(
+          event.text, 
+          event.user, 
+          event.team || 'default'
+        );
+        
+        const client = await this.getClient(event.team);
+        await client.chat.postMessage({
+          channel: event.channel,
+          text: response.message,
+          blocks: this.formatAIResponseBlocks(response)
+        });
+        return; // Exit here - don't fall through to fallback
+      }
+    } catch (error) {
+      console.error("AI service error for DM, falling back to simple responses:", error);
+      // Only fall through to fallback if AI service is completely unavailable
+      // or if there was a critical error
+    }
+
+    // Only reach here if AI service is unhealthy or failed completely
+    await this.handleDirectMessageFallback(event);
+  }
+
+  private async handleDirectMessageFallback(event: any) {
+    const client = await this.getClient(event.team);
+    const text = event.text.toLowerCase();
+
+    if (text.includes("focus") || text.includes("concentrate")) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "🎯 Let's start a focus session! Use `/focus 25` for a 25-minute session, or `/focus 45` for 45 minutes. You can also just tell me 'start a focus session' and I'll help you!",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "🎯 *Focus Session Options*"
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: { type: "plain_text", text: "25 min Focus" },
+                action_id: "start_focus_25",
+                style: "primary"
+              },
+              {
+                type: "button",
+                text: { type: "plain_text", text: "45 min Focus" },
+                action_id: "start_focus_45"
+              }
+            ]
+          }
+        ]
+      });
+    } else if (text.includes("break") || text.includes("rest")) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "☕ Time for a break! Use `/break` to get a personalized break suggestion, or tell me what kind of break you need (coffee, stretch, walk, etc.)",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "☕ *Break Options*"
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: { type: "plain_text", text: "Coffee Break" },
+                action_id: "suggest_break_coffee"
+              },
+              {
+                type: "button",
+                text: { type: "plain_text", text: "Stretch Break" },
+                action_id: "suggest_break_stretch"
+              }
+            ]
+          }
+        ]
+      });
+    } else if (text.includes("productivity") || text.includes("metrics") || text.includes("summary")) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "📊 Let me show you your productivity summary! Use `/productivity` to see your detailed metrics and insights.",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "📊 *Productivity Dashboard*"
+            }
+          },
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: { type: "plain_text", text: "View Productivity" },
+                action_id: "show_productivity"
+              }
+            ]
+          }
+        ]
+      });
+    } else if (text.includes("help") || text.includes("commands") || text.includes("what can you do")) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "👋 Hi! I'm your AI productivity assistant. Here's what I can help you with:",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "👋 *Hi! I'm your AI productivity assistant!*\n\nI can help you with:"
+            }
+          },
+          {
+            type: "section",
+            fields: [
+              {
+                type: "mrkdwn",
+                text: "*🎯 Focus Sessions*\nStart timed focus sessions with automatic Slack status updates"
+              },
+              {
+                type: "mrkdwn",
+                text: "*☕ Smart Breaks*\nGet personalized break suggestions based on your schedule"
+              },
+              {
+                type: "mrkdwn",
+                text: "*📊 Productivity Metrics*\nTrack your meeting time, focus patterns, and work habits"
+              },
+              {
+                type: "mrkdwn",
+                text: "*🤖 Natural Language*\nJust tell me what you need in plain English!"
+              }
+            ]
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "*Examples:*\n• \"Start a 30 minute focus session\"\n• \"I need a coffee break\"\n• \"Show me my productivity metrics\"\n• \"How was my week?\""
+            }
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "*Slash Commands:*\n• `/focus` - Start focus sessions\n• `/break` - Get break suggestions\n• `/productivity` - View your metrics"
+            }
+          }
+        ]
+      });
+    } else {
+      // General response for unclear messages
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "🤔 I'm not sure I understand. I can help you with focus sessions, breaks, and productivity tracking. Try saying something like:\n• \"Start a focus session\"\n• \"I need a break\"\n• \"Show my productivity\"\n• \"Help\" for more options",
+      });
+    }
+  }
+
+  private async handleChannelMessage(event: any) {
+    // Legacy handling for channel messages (non-DM)
+    // Only respond if the message specifically mentions productivity topics
+    if (event.text && event.text.includes("break")) {
+      await this.handleBreakRequest(event);
+    }
+    // We could expand this later to handle more channel interactions
+  }
+
   private async handleAppMention(event: any) {
+    try {
+      // Try to use AI service for intelligent responses
+      const { aiService } = await import('./ai');
+      const isAIHealthy = await aiService.isHealthy();
+      
+      if (isAIHealthy) {
+        // Use AI service for smart handling
+        await aiService.handleAIMention(event);
+        return;
+      }
+    } catch (error) {
+      console.error("AI service unavailable, falling back to simple responses:", error);
+    }
+
+    // Fallback to simple keyword-based responses
     const client = await this.getClient(event.team);
     
     if (event.text.includes("focus")) {
       await client.chat.postMessage({
         channel: event.channel,
-        text: "🎯 Ready to start a focus session? Use the `/focus` command to get started!",
+        text: "🎯 Ready to start a focus session? Use the `/focus` command to get started! You can also ask me in natural language like 'start a 30 minute focus session'.",
       });
     } else if (event.text.includes("break")) {
       await client.chat.postMessage({
         channel: event.channel,
-        text: "☕ Taking breaks is important! I can suggest the perfect time for your next break.",
+        text: "☕ Taking breaks is important! I can suggest the perfect time for your next break. Try asking 'suggest a coffee break' or use `/break`.",
+      });
+    } else if (event.text.includes("productivity") || event.text.includes("metrics")) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "📊 Want to see your productivity summary? Ask me 'show my productivity metrics' or use `/productivity`.",
       });
     } else {
       await client.chat.postMessage({
         channel: event.channel,
-        text: "👋 Hi! I help you stay productive by managing your focus time and suggesting breaks. Try asking me about focus sessions or breaks!",
+        text: "👋 Hi! I'm your AI productivity assistant! I can help with:\n• Starting focus sessions (try: 'start a 25 minute focus session')\n• Suggesting breaks (try: 'I need a coffee break')\n• Showing productivity metrics (try: 'how productive was I today?')\n\nJust mention me and ask in natural language, or use the slash commands: `/focus`, `/break`, `/productivity`",
       });
     }
   }
