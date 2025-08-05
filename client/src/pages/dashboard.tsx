@@ -113,6 +113,27 @@ export default function Dashboard() {
     }
   };
 
+  const startBreakMonitoring = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch("/api/start-break-monitoring", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId }),
+      });
+      
+      if (response.ok) {
+        // Show success feedback
+        console.log("Break monitoring started successfully");
+      }
+    } catch (error) {
+      console.error("Failed to start break monitoring:", error);
+    }
+  };
+
   const formatTime = (dateString: string, timezone: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
       timeZone: timezone,
@@ -228,17 +249,65 @@ export default function Dashboard() {
             <Target className="h-4 w-4 mr-2" />
             Clear Focus & Breaks
           </Button>
-          <Button onClick={() => skipTimeForward(1)} variant="outline" size="sm">
-            ⏩ +1 Day
-          </Button>
-          <Button onClick={() => skipTimeForward(7)} variant="outline" size="sm">
-            ⏩ +1 Week
-          </Button>
           <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
       </div>
+
+      {/* Advanced Time Skip Controls */}
+      <Card className="border-orange-200 bg-orange-50">
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            ⏰ Demo Time Controls
+            <Badge variant="secondary" className="ml-2">Demo Feature</Badge>
+          </CardTitle>
+          <CardDescription>
+            Skip time forward to test break alerts and productivity patterns
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <Button onClick={() => skipTimeForward(1/24)} variant="outline" size="sm">
+              +1 Hour
+            </Button>
+            <Button onClick={() => skipTimeForward(2/24)} variant="outline" size="sm">
+              +2 Hours
+            </Button>
+            <Button onClick={() => skipTimeForward(4/24)} variant="outline" size="sm">
+              +4 Hours
+            </Button>
+            <Button onClick={() => skipTimeForward(8/24)} variant="outline" size="sm">
+              +8 Hours
+            </Button>
+            <Button onClick={() => skipTimeForward(1)} variant="outline" size="sm">
+              +1 Day
+            </Button>
+            <Button onClick={() => skipTimeForward(3)} variant="outline" size="sm">
+              +3 Days
+            </Button>
+            <Button onClick={() => skipTimeForward(7)} variant="outline" size="sm">
+              +1 Week
+            </Button>
+            <Button onClick={() => skipTimeForward(14)} variant="outline" size="sm">
+              +2 Weeks
+            </Button>
+          </div>
+          <div className="mt-4 flex items-center justify-between">
+            <Button onClick={startBreakMonitoring} className="bg-green-600 hover:bg-green-700">
+              🔔 Start Break Monitoring
+            </Button>
+            <div className="text-sm text-gray-600">
+              Enables 2-hour break alerts
+            </div>
+          </div>
+          <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+            <p className="text-sm text-blue-700">
+              💡 <strong>Demo Tip:</strong> Start monitoring, then skip forward 2-4 hours to trigger break alerts. Skip 1+ days to see productivity patterns.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

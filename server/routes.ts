@@ -297,7 +297,8 @@ async function clearFocusAndBreakData(userId: string) {
 
 // Skip time forward for demo purposes
 async function skipTimeForward(userId: string, days: number) {
-  console.log(`Skipping ${days} days forward for user ${userId}`);
+  const timeUnit = days >= 1 ? `${days} days` : `${Math.round(days * 24)} hours`;
+  console.log(`Skipping ${timeUnit} forward for user ${userId}`);
   
   try {
     // Move all meetings forward by the specified number of days
@@ -358,7 +359,7 @@ async function skipTimeForward(userId: string, days: number) {
       }
     }
     
-    console.log(`✅ Successfully skipped ${days} days forward for user ${userId}`);
+    console.log(`✅ Successfully skipped ${timeUnit} forward for user ${userId}`);
   } catch (error) {
     console.error("Failed to skip time forward:", error);
     throw error;
@@ -850,8 +851,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "User ID and days required" });
       }
 
-      if (typeof days !== 'number' || days < 1 || days > 30) {
-        return res.status(400).json({ error: "Days must be a number between 1 and 30" });
+      if (typeof days !== 'number' || days < 0.04 || days > 30) {
+        return res.status(400).json({ error: "Days must be a number between 0.04 (1 hour) and 30" });
       }
 
       await skipTimeForward(userId, days);

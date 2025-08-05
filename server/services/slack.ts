@@ -3410,81 +3410,54 @@ class SlackService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Get today's activity
-    const meetings = await storage.getMeetingsByDate(userId, today);
-    const focusSessions = await storage.getFocusSessionsByDate(userId, today);
+    // Get today's break activity
     const recentBreaks = await storage.getRecentBreakSuggestions(userId, 24);
     
     const todaysBreaks = recentBreaks.filter(b => 
       b.accepted && b.acceptedAt && new Date(b.acceptedAt).toDateString() === today.toDateString()
     );
 
-    // Calculate time since last break
+    // Calculate time since last break (including user-initiated breaks)
     const lastBreak = todaysBreaks[0];
     const hoursSinceLastBreak = lastBreak && lastBreak.acceptedAt
       ? (now.getTime() - new Date(lastBreak.acceptedAt).getTime()) / (1000 * 60 * 60)
-      : 24; // If no breaks today, assume it's been a while
+      : this.getHoursSinceWorkStart(now); // Hours since work started today
 
-    // Check current meeting situation
-    const currentMeetings = meetings.filter(m => {
-      const start = new Date(m.startTime);
-      const end = new Date(m.endTime);
-      return start <= now && end >= now;
-    });
+    // Simple 2-hour rule: suggest break every 2 hours
+    if (hoursSinceLastBreak >= 2) {
+      const breakTypes = ['hydration', 'stretch', 'walk', 'meditation'];
+      const breakType = breakTypes[todaysBreaks.length % breakTypes.length]; // Rotate through types
+      
+      let urgency: 'low' | 'medium' | 'high' = 'medium';
+      if (hoursSinceLastBreak >= 3) urgency = 'high';
+      if (hoursSinceLastBreak < 2.5) urgency = 'low';
 
-    const inMeeting = currentMeetings.length > 0;
-
-    // Calculate meeting intensity today
-    const totalMeetingTime = meetings.reduce((sum, m) => sum + (m.duration || 0), 0);
-    const meetingHours = totalMeetingTime / 60;
-
-    // Check focus session activity
-    const activeFocus = await storage.getActiveFocusSession(userId);
-    const totalFocusTime = focusSessions.reduce((sum, s) => sum + (s.duration || 0), 0);
-
-    // Break need analysis
-    if (hoursSinceLastBreak >= 3 && meetingHours >= 2) {
       return {
         needed: true,
-        reason: `${meetingHours.toFixed(1)} hours of meetings today, ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
-        type: 'stretch',
-        urgency: 'high'
-      };
-    }
-
-    if (hoursSinceLastBreak >= 2 && (activeFocus || totalFocusTime >= 90)) {
-      return {
-        needed: true,
-        reason: `Extended focus time, ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
-        type: 'hydration',
-        urgency: 'medium'
-      };
-    }
-
-    if (hoursSinceLastBreak >= 4) {
-      return {
-        needed: true,
-        reason: `${hoursSinceLastBreak.toFixed(1)} hours since last break`,
-        type: 'walk',
-        urgency: 'medium'
-      };
-    }
-
-    if (todaysBreaks.length === 0 && now.getHours() >= 14) {
-      return {
-        needed: true,
-        reason: "No breaks taken today, afternoon energy dip",
-        type: 'meditation',
-        urgency: 'low'
+        reason: `${hoursSinceLastBreak.toFixed(1)} hours since last break - time for a wellness break!`,
+        type: breakType,
+        urgency
       };
     }
 
     return {
       needed: false,
-      reason: "Recent break taken or low activity",
+      reason: `Only ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
       type: '',
       urgency: 'low'
     };
+  }
+
+  private getHoursSinceWorkStart(now: Date): number {
+    const workStart = new Date(now);
+    workStart.setHours(8, 0, 0, 0); // Work starts at 8 AM
+    
+    // If it's before 8 AM, assume work hasn't started
+    if (now.getHours() < 8) {
+      return 0;
+    }
+    
+    return (now.getTime() - workStart.getTime()) / (1000 * 60 * 60);
   }
 
   private async checkMeetingConflicts(userId: string, now: Date): Promise<{hasConflict: boolean, reason: string, suggestAfter?: Date}> {
