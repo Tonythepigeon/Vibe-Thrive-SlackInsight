@@ -172,9 +172,14 @@ export default function Dashboard() {
       if (response.ok) {
         // Show success feedback
         console.log("Break monitoring started successfully");
+        alert("✅ Break monitoring started! Skip forward 2+ hours to trigger break alerts.");
+      } else {
+        const error = await response.json();
+        alert(`❌ Failed to start break monitoring: ${error.error}`);
       }
     } catch (error) {
       console.error("Failed to start break monitoring:", error);
+      alert("❌ Failed to start break monitoring. Check console for details.");
     }
   };
 

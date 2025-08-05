@@ -300,7 +300,7 @@ async function clearFocusAndBreakData(userId: string) {
 }
 
 // Store time offsets for each user (in-memory for demo purposes)
-const userTimeOffsets = new Map<string, number>();
+export const userTimeOffsets = new Map<string, number>();
 
 // Skip time forward/backward for demo purposes
 async function skipTimeForward(userId: string, days: number) {
@@ -377,6 +377,15 @@ async function skipTimeForward(userId: string, days: number) {
       } catch (error) {
         console.error(`Failed to recalculate metrics for ${date.toDateString()}:`, error);
       }
+    }
+    
+    // Trigger immediate break check after time skip
+    try {
+      const { slackService } = await import('./services/slack');
+      await slackService.checkBreakAfterTimeSkip(userId);
+    } catch (breakError) {
+      console.error("Failed to check breaks after time skip:", breakError);
+      // Don't fail the time skip if break check fails
     }
     
     console.log(`✅ Successfully skipped ${timeUnit} ${direction} for user ${userId}`);

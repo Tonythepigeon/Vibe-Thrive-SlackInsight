@@ -3347,6 +3347,50 @@ class SlackService {
     }
   }
 
+  // Check for breaks immediately after time skip (for demo purposes)
+  async checkBreakAfterTimeSkip(userId: string) {
+    try {
+      console.log(`Checking for immediate break suggestions after time skip for user ${userId}`);
+      
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) {
+        console.log(`Cannot check breaks for user ${userId} - no Slack user ID`);
+        return;
+      }
+
+      // Get demo time instead of real time
+      const demoTime = await this.getDemoTimeForUser(userId);
+      console.log(`Using demo time for break check: ${demoTime.toISOString()}`);
+      
+      const workingHours = this.isWorkingHours(demoTime);
+      if (!workingHours) {
+        console.log(`Skipping break check for ${userId} - outside working hours (demo time)`);
+        return;
+      }
+
+      // Check if user needs a break using demo time
+      const breakNeeded = await this.analyzeBreakNeedWithDemoTime(userId, demoTime);
+      if (!breakNeeded.needed) {
+        console.log(`No break needed for ${userId}: ${breakNeeded.reason}`);
+        return;
+      }
+
+      // Check for meeting conflicts using demo time
+      const meetingConflict = await this.checkMeetingConflictsWithDemoTime(userId, demoTime);
+      if (meetingConflict.hasConflict) {
+        console.log(`Break suggestion delayed for ${userId}: ${meetingConflict.reason}`);
+        return; // Don't schedule delayed for demo - just skip
+      }
+
+      // Send proactive break alert immediately
+      console.log(`Sending immediate break alert for ${userId}: ${breakNeeded.reason}`);
+      await this.sendProactiveBreakAlert(userId, breakNeeded);
+      
+    } catch (error) {
+      console.error("Error in immediate break check after time skip:", error);
+    }
+  }
+
   private async shouldMonitorBreaksForUser(userId: string): Promise<boolean> {
     // Check if user has had recent activity (meetings, focus sessions, etc.)
     const today = new Date();
@@ -3458,6 +3502,107 @@ class SlackService {
     }
     
     return (now.getTime() - workStart.getTime()) / (1000 * 60 * 60);
+  }
+
+  // Get demo time for a user (used for break checking after time skips)
+  private async getDemoTimeForUser(userId: string): Promise<Date> {
+    try {
+      // Import routes to access userTimeOffsets
+      const { userTimeOffsets } = await import('../routes');
+      const storedOffset = userTimeOffsets?.get(userId) || 0;
+      
+      if (storedOffset !== 0) {
+        const now = new Date();
+        return new Date(now.getTime() + storedOffset);
+      }
+      
+      return new Date(); // Fallback to real time
+    } catch (error) {
+      console.error("Failed to get demo time, using real time:", error);
+      return new Date();
+    }
+  }
+
+  // Demo-time aware break need analysis
+  private async analyzeBreakNeedWithDemoTime(userId: string, demoTime: Date): Promise<{needed: boolean, reason: string, type: string, urgency: 'low' | 'medium' | 'high'}> {
+    const today = new Date(demoTime);
+    today.setHours(0, 0, 0, 0);
+    
+    // Get today's break activity (using demo time)
+    const recentBreaks = await storage.getRecentBreakSuggestions(userId, 24);
+    
+    const todaysBreaks = recentBreaks.filter(b => 
+      b.accepted && b.acceptedAt && new Date(b.acceptedAt).toDateString() === today.toDateString()
+    );
+
+    // Calculate time since last break using demo time
+    const lastBreak = todaysBreaks[0];
+    const hoursSinceLastBreak = lastBreak && lastBreak.acceptedAt
+      ? (demoTime.getTime() - new Date(lastBreak.acceptedAt).getTime()) / (1000 * 60 * 60)
+      : this.getHoursSinceWorkStart(demoTime); // Hours since work started in demo time
+
+    console.log(`Break analysis for ${userId} (demo time ${demoTime.toISOString()}): ${hoursSinceLastBreak.toFixed(1)} hours since last break`);
+
+    // Simple 2-hour rule: suggest break every 2 hours
+    if (hoursSinceLastBreak >= 2) {
+      const breakTypes = ['hydration', 'stretch', 'walk', 'meditation'];
+      const breakType = breakTypes[todaysBreaks.length % breakTypes.length]; // Rotate through types
+      
+      let urgency: 'low' | 'medium' | 'high' = 'medium';
+      if (hoursSinceLastBreak >= 3) urgency = 'high';
+      if (hoursSinceLastBreak < 2.5) urgency = 'low';
+
+      return {
+        needed: true,
+        reason: `${hoursSinceLastBreak.toFixed(1)} hours since last break - time for a wellness break!`,
+        type: breakType,
+        urgency
+      };
+    }
+
+    return {
+      needed: false,
+      reason: `Only ${hoursSinceLastBreak.toFixed(1)} hours since last break`,
+      type: '',
+      urgency: 'low'
+    };
+  }
+
+  // Demo-time aware meeting conflict checking
+  private async checkMeetingConflictsWithDemoTime(userId: string, demoTime: Date): Promise<{hasConflict: boolean, reason: string, suggestAfter?: Date}> {
+    const meetings = await storage.getMeetingsByDate(userId, demoTime);
+    
+    // Check if currently in a meeting (using demo time)
+    const currentMeeting = meetings.find(m => {
+      const start = new Date(m.startTime);
+      const end = new Date(m.endTime);
+      return start <= demoTime && end >= demoTime;
+    });
+
+    if (currentMeeting) {
+      return {
+        hasConflict: true,
+        reason: `Currently in "${currentMeeting.title}" (demo time)`,
+        suggestAfter: new Date(currentMeeting.endTime)
+      };
+    }
+
+    // Check for meetings starting within 10 minutes (using demo time)
+    const upcomingMeeting = meetings.find(m => {
+      const start = new Date(m.startTime);
+      const timeDiff = start.getTime() - demoTime.getTime();
+      return timeDiff > 0 && timeDiff <= 10 * 60 * 1000; // Within 10 minutes
+    });
+
+    if (upcomingMeeting) {
+      return {
+        hasConflict: true,
+        reason: `Meeting "${upcomingMeeting.title}" starts in ${Math.round((new Date(upcomingMeeting.startTime).getTime() - demoTime.getTime()) / (1000 * 60))} minutes`,
+        suggestAfter: new Date(upcomingMeeting.endTime)
+      };
+    }
+
+    return { hasConflict: false, reason: "No conflicts" };
   }
 
   private async checkMeetingConflicts(userId: string, now: Date): Promise<{hasConflict: boolean, reason: string, suggestAfter?: Date}> {
