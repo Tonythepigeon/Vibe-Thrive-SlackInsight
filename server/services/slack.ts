@@ -71,7 +71,7 @@ class SlackService {
       console.error("Slack event handling error:", error);
       // Only send error response if we haven't already sent a response
       if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to handle Slack event" });
+      res.status(500).json({ error: "Failed to handle Slack event" });
       }
     }
   }
@@ -88,25 +88,25 @@ class SlackService {
       
       if (isSimpleCommand) {
         // For simple commands, process immediately and respond
-        let response;
+      let response;
         
-        switch (command) {
-          case "/focus":
-            response = await this.handleFocusCommand(text, user_id, team_id);
-            break;
-          case "/break":
-            response = await this.handleBreakCommand(text, user_id, team_id);
-            break;
-          case "/productivity":
-            response = await this.handleProductivityCommand(text, user_id, team_id);
-            break;
-          default:
-            response = {
+      switch (command) {
+        case "/focus":
+          response = await this.handleFocusCommand(text, user_id, team_id);
+          break;
+        case "/break":
+          response = await this.handleBreakCommand(text, user_id, team_id);
+          break;
+        case "/productivity":
+          response = await this.handleProductivityCommand(text, user_id, team_id);
+          break;
+        default:
+          response = {
               text: "Unknown command. Available commands: /focus, /break, /productivity\n\n💡 *Tip:* You can also message me directly or mention me in channels for natural language interactions!"
-            };
-        }
-        
-        res.json(response);
+          };
+      }
+
+      res.json(response);
         return;
       }
       
@@ -134,7 +134,7 @@ class SlackService {
       console.error("Slash command error:", error);
       // Only send error response if we haven't already sent a response
       if (!res.headersSent) {
-        res.status(500).json({ error: "Command failed" });
+      res.status(500).json({ error: "Command failed" });
       }
     }
   }
@@ -735,6 +735,155 @@ class SlackService {
     return { startTime: new Date(), duration: 25, error: "Invalid command format" };
   }
   
+  // Parse break command input to extract time, duration, and break type
+  private parseBreakInput(text: string): { startTime: Date; duration: number; breakType: string; error?: string } {
+    const trimmed = text.trim();
+    
+    // Handle empty input - default break suggestion
+    if (!trimmed) {
+      return { startTime: new Date(), duration: 15, breakType: "general" }; // Default 15-minute general break
+    }
+    
+    const parts = trimmed.split(/\s+/);
+    const breakTypes = ['coffee', 'hydration', 'stretch', 'meditation', 'walk', 'lunch', 'general'];
+    
+    // Single input - could be duration or break type
+    if (parts.length === 1) {
+      // Check if it's a number (duration)
+      if (/^\d+$/.test(parts[0])) {
+        const duration = parseInt(parts[0]);
+        if (duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        return { startTime: new Date(), duration, breakType: "general" };
+      }
+      
+      // Check if it's a break type
+      const breakType = parts[0].toLowerCase();
+      if (breakTypes.includes(breakType)) {
+        return { startTime: new Date(), duration: this.getDefaultBreakDuration(breakType), breakType };
+      }
+      
+      return { startTime: new Date(), duration: 15, breakType: "general", error: "Invalid input. Use a number for duration or a break type (coffee, stretch, etc.)" };
+    }
+    
+    // Two parts - could be "duration type", "time duration", or "now duration"
+    if (parts.length === 2) {
+      const [first, second] = parts;
+      
+      // Check if first is "now"
+      if (first.toLowerCase() === 'now') {
+        const duration = parseInt(second);
+        if (isNaN(duration) || duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        return { startTime: new Date(), duration, breakType: "general" };
+      }
+      
+      // Check if first is a time (2:30pm, 14:30)
+      const startTime = this.parseTimeString(first);
+      if (startTime) {
+        const duration = parseInt(second);
+        if (isNaN(duration) || duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        
+        // Validate timing (same as focus sessions)
+        const now = new Date();
+        const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+        if (startTime < fiveMinutesAgo) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Cannot schedule breaks in the past" };
+        }
+        
+        const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        if (startTime > twentyFourHoursFromNow) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Cannot schedule breaks more than 24 hours in advance" };
+        }
+        
+        return { startTime, duration, breakType: "general" };
+      }
+      
+      // Check if first is duration and second is break type
+      const duration = parseInt(first);
+      const breakType = second.toLowerCase();
+      if (!isNaN(duration) && breakTypes.includes(breakType)) {
+        if (duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        return { startTime: new Date(), duration, breakType };
+      }
+      
+      return { startTime: new Date(), duration: 15, breakType: "general", error: "Invalid format. Use 'duration type' or 'time duration'" };
+    }
+    
+    // Three parts - "time duration type" or "now duration type"
+    if (parts.length === 3) {
+      const [first, second, third] = parts;
+      
+      // Handle "now duration type"
+      if (first.toLowerCase() === 'now') {
+        const duration = parseInt(second);
+        const breakType = third.toLowerCase();
+        
+        if (isNaN(duration) || duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        
+        if (!breakTypes.includes(breakType)) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: `Invalid break type. Use: ${breakTypes.join(', ')}` };
+        }
+        
+        return { startTime: new Date(), duration, breakType };
+      }
+      
+      // Handle "time duration type"
+      const startTime = this.parseTimeString(first);
+      if (startTime) {
+        const duration = parseInt(second);
+        const breakType = third.toLowerCase();
+        
+        if (isNaN(duration) || duration < 1 || duration > 120) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Break duration must be between 1 and 120 minutes" };
+        }
+        
+        if (!breakTypes.includes(breakType)) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: `Invalid break type. Use: ${breakTypes.join(', ')}` };
+        }
+        
+        // Validate timing
+        const now = new Date();
+        const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+        if (startTime < fiveMinutesAgo) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Cannot schedule breaks in the past" };
+        }
+        
+        const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        if (startTime > twentyFourHoursFromNow) {
+          return { startTime: new Date(), duration: 15, breakType: "general", error: "Cannot schedule breaks more than 24 hours in advance" };
+        }
+        
+        return { startTime, duration, breakType };
+      }
+    }
+    
+    // Invalid format
+    return { startTime: new Date(), duration: 15, breakType: "general", error: "Invalid command format" };
+  }
+  
+  // Get default duration for break types
+  private getDefaultBreakDuration(breakType: string): number {
+    const durations = {
+      coffee: 10,
+      hydration: 5,
+      stretch: 10,
+      meditation: 15,
+      walk: 20,
+      lunch: 60,
+      general: 15
+    };
+    return durations[breakType as keyof typeof durations] || 15;
+  }
+
   // Parse time string into Date object (today at specified time)
   private parseTimeString(timeStr: string): Date | null {
     const now = new Date();
@@ -824,7 +973,7 @@ class SlackService {
     
     // For immediate sessions, use current time; for scheduled sessions, use specified time
     const sessionStartTime = isScheduled ? startTime : now;
-    
+
     // Create focus session
     const session = await storage.createFocusSession({
       userId: user.id,
@@ -878,45 +1027,55 @@ class SlackService {
       };
     } else {
       // For immediate sessions, set Slack status and start now
-      this.setFocusMode(user.id, duration).catch(console.error);
+    this.setFocusMode(user.id, duration).catch(console.error);
 
-      return {
-        response_type: "ephemeral",
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n⚡ Setting up your Slack status automatically...\n\nI'll send you a DM with session details and confirmation!`
-            }
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "End Focus Session"
-                },
-                style: "danger",
-                action_id: "end_focus",
-                value: session.id
-              }
-            ]
+    return {
+      response_type: "ephemeral",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `🎯 *Focus mode activated!*\nDuration: ${duration} minutes\n\n⚡ Setting up your Slack status automatically...\n\nI'll send you a DM with session details and confirmation!`
           }
-        ]
-      };
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "End Focus Session"
+              },
+              style: "danger",
+              action_id: "end_focus",
+              value: session.id
+            }
+          ]
+        }
+      ]
+    };
     }
   }
 
   async handleBreakCommand(text: string, userId: string, teamId: string) {
-    const breakType = text.toLowerCase() || "general";
+    // Parse the input to extract timing, duration, and break type
+    const parsedInput = this.parseBreakInput(text);
+    
+    if (parsedInput.error) {
+      return {
+        response_type: "ephemeral",
+        text: `❌ ${parsedInput.error}\n\n📝 *Usage examples:*\n• \`/break 15\` - Take a 15-minute break now\n• \`/break 2:30pm 20\` - Schedule a 20-minute break at 2:30 PM\n• \`/break now 10 coffee\` - Take a 10-minute coffee break now\n• \`/break 30 lunch\` - Take a 30-minute lunch break\n• \`/break\` - Get a wellness break suggestion`
+      };
+    }
+    
+    const { startTime, duration, breakType } = parsedInput;
     
     try {
       // Set a timeout for the entire operation
       const result = await Promise.race([
-        this.processBreakCommand(userId, teamId, breakType),
+        this.processBreakCommand(userId, teamId, breakType, duration, startTime),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Operation timeout')), 1000)
         )
@@ -927,16 +1086,18 @@ class SlackService {
       console.error("Break command error:", error);
       
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const isScheduled = startTime > new Date();
+      
       return {
         response_type: "ephemeral",
         text: errorMessage === 'Operation timeout'
-          ? `☕ Your ${breakType} break suggestion is being prepared!`
+          ? `☕ Your ${duration}-minute ${breakType} break ${isScheduled ? 'is being scheduled' : 'suggestion is being prepared'}!`
           : "❌ Failed to process break request. Please try again."
       };
     }
   }
 
-  private async processBreakCommand(userId: string, teamId: string, breakType: string) {
+  private async processBreakCommand(userId: string, teamId: string, breakType: string, duration: number = 15, startTime: Date = new Date()) {
     // Ensure team info is stored
     await this.ensureTeamStored(teamId);
 
@@ -959,10 +1120,15 @@ class SlackService {
       }).catch(console.error);
     }
 
-    // Check if this is a good time for a break based on calendar
-    const breakCheck = await this.shouldSuggestBreak(user.id);
+    const now = new Date();
+    const isScheduled = startTime > now;
     
-    if (!breakCheck.suggest) {
+    // For immediate breaks, check if this is a good time based on calendar
+    const breakCheck = isScheduled ? 
+      { suggest: true, reason: "Scheduled break" } : 
+      await this.shouldSuggestBreak(user.id);
+    
+    if (!isScheduled && !breakCheck.suggest) {
       return {
         response_type: "ephemeral",
         blocks: [
@@ -992,11 +1158,26 @@ class SlackService {
       };
     }
 
+    // Create break suggestion
     const suggestion = await storage.createBreakSuggestion({
       userId: user.id,
       type: breakType,
-      message: `You requested a ${breakType} break`,
-      reason: breakCheck.reason
+      message: `You requested a ${duration}-minute ${breakType} break`,
+      reason: breakCheck.reason,
+      suggestedAt: startTime
+    });
+
+    // Update daily productivity metrics (async, don't block response)
+    this.updateDailyMetrics(user.id, startTime).catch(console.error);
+
+    if (isScheduled) {
+      // For scheduled breaks, show confirmation and schedule reminder
+      const userTimezone = user?.timezone || 'America/New_York';
+      const startTimeFormatted = startTime.toLocaleTimeString('en-US', {
+        timeZone: userTimezone,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
     });
 
     return {
@@ -1006,7 +1187,7 @@ class SlackService {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `☕ *Break time!*\n${this.getBreakMessage(breakType)}\n\n✨ *Perfect timing:* ${breakCheck.reason}`
+              text: `📅 *Break scheduled!*\n\n⏰ Start time: ${startTimeFormatted}\n⏱️ Duration: ${duration} minutes\n☕ Type: ${this.getBreakMessage(breakType)}\n\n✅ I'll send you a reminder when it's time for your break!\n\n💡 *Break prep tips:*\n• Clear your current task\n• Set expectations with colleagues\n• Prepare for a refreshing pause`
           }
         },
         {
@@ -1016,25 +1197,54 @@ class SlackService {
               type: "button",
               text: {
                 type: "plain_text",
-                text: "Take Break Now"
+                  text: "Cancel Break"
               },
-              style: "primary",
-              action_id: "take_break",
+                style: "danger",
+                action_id: "cancel_scheduled_break",
               value: suggestion.id
-            },
+              }
+            ]
+          }
+        ]
+      };
+    } else {
+      // For immediate breaks, start the break now
+      this.setBreakMode(user.id, duration).catch(console.error);
+
+      // Mark the suggestion as accepted immediately for instant breaks
+      storage.updateBreakSuggestion(suggestion.id, {
+        accepted: true,
+        acceptedAt: new Date()
+      }).catch(console.error);
+
+      return {
+        response_type: "ephemeral",
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `☕ *${duration}-minute ${breakType} break started!*\n\n${this.getBreakMessage(breakType)}\n\n⚡ Setting up your Slack status automatically...\n\n✨ *Perfect timing:* ${breakCheck.reason}\n\n🌟 *Enjoy your break:*\n• Step away from your screen\n• ${this.getBreakTip(breakType)}\n• You've earned this time!`
+            }
+          },
+          {
+            type: "actions",
+            elements: [
             {
               type: "button",
               text: {
                 type: "plain_text",
-                text: "Maybe Later"
+                  text: "End Break Early"
               },
-              action_id: "defer_break",
+                style: "danger",
+                action_id: "end_break",
               value: suggestion.id
             }
           ]
         }
       ]
     };
+    }
   }
 
   async handleProductivityCommand(text: string, userId: string, teamId: string) {
@@ -1303,6 +1513,12 @@ class SlackService {
       case "cancel_scheduled_focus":
         console.log("Handling cancel_scheduled_focus action");
         return await this.cancelScheduledFocusSession(action.value, user.id);
+      case "cancel_scheduled_break":
+        console.log("Handling cancel_scheduled_break action");
+        return await this.cancelScheduledBreak(action.value, user.id);
+      case "end_break":
+        console.log("Handling end_break action");
+        return await this.endBreakEarly(action.value, user.id);
       case "start_focus_25":
         console.log("Handling start_focus_25 action");
         return await this.handleQuickFocusSession(user.id, team.id, 25);
@@ -1824,9 +2040,9 @@ class SlackService {
   private async handleChannelMessage(event: any) {
     // Legacy handling for channel messages (non-DM)
     // Only respond if the message specifically mentions productivity topics
-    if (event.text && event.text.includes("break")) {
-      await this.handleBreakRequest(event);
-    }
+        if (event.text && event.text.includes("break")) {
+          await this.handleBreakRequest(event);
+        }
     // We could expand this later to handle more channel interactions
   }
 
@@ -2181,13 +2397,28 @@ class SlackService {
 
   private getBreakMessage(type: string): string {
     const messages = {
+      coffee: "☕ Coffee break time! Grab your favorite beverage.",
       hydration: "💧 Stay hydrated! Time for a water break.",
       stretch: "🤸‍♀️ Your body needs movement. Take a quick stretch break!",
-      meditation: "🧘‍♂️ Reset your mind with a 5-minute meditation break.",
+      meditation: "🧘‍♂️ Reset your mind with a meditation break.",
       walk: "🚶‍♀️ Step outside for a refreshing walk.",
+      lunch: "🍽️ Time for a proper lunch break!",
       general: "⏰ Time for a wellness break!"
     };
     return messages[type as keyof typeof messages] || messages.general;
+  }
+
+  private getBreakTip(type: string): string {
+    const tips = {
+      coffee: "Enjoy your drink mindfully, away from work",
+      hydration: "Drink water slowly and take deep breaths",
+      stretch: "Focus on your neck, shoulders, and back",
+      meditation: "Try the 4-7-8 breathing technique",
+      walk: "Get some fresh air and natural light",
+      lunch: "Eat slowly and enjoy your meal",
+      general: "Take a few deep breaths and relax"
+    };
+    return tips[type as keyof typeof tips] || tips.general;
   }
 
   // New method to set break status (similar to focus mode)
@@ -2249,6 +2480,73 @@ class SlackService {
     } catch (error) {
       console.error("Failed to set break mode:", error);
     }
+  }
+
+  // Clear break mode status
+  async clearBreakMode(userId: string) {
+    try {
+      const user = await storage.getUser(userId);
+      if (!user || !user.slackUserId) return;
+
+      // Try to get user token first for status clearing
+      const userClient = await this.getUserClient(userId);
+      
+      if (userClient) {
+        // We have user token - clear status directly!
+        try {
+          await userClient.users.profile.set({
+            profile: {
+              status_text: "",
+              status_emoji: "",
+              status_expiration: 0
+            }
+          });
+
+          // Send completion DM with bot client
+          const botClient = await this.getClient(user.slackTeamId || undefined);
+          await botClient.chat.postMessage({
+            channel: user.slackUserId,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `✅ *Break Complete!*\n\nHope you feel refreshed! Your Slack status has been cleared automatically.\n\nTime to get back to work with renewed energy! 💪`
+                }
+              }
+            ]
+          });
+
+          console.log(`Successfully cleared break status for user ${user.slackUserId}`);
+        } catch (statusError) {
+          console.error("Failed to clear break status, sending notification:", statusError);
+          // Fall back to notification if status clearing fails
+          await this.sendBreakCompletionNotification(user);
+        }
+      } else {
+        // No user token - send helpful notification
+        await this.sendBreakCompletionNotification(user);
+      }
+    } catch (error) {
+      console.error("Failed to clear break mode:", error);
+    }
+  }
+
+  private async sendBreakCompletionNotification(user: any) {
+    const client = await this.getClient(user.slackTeamId || undefined);
+
+    await client.chat.postMessage({
+      channel: user.slackUserId,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `✅ *Break Complete!*\n\nHope you feel refreshed! Time to get back to work with renewed energy.\n\n💡 _Don't forget to update your Slack status if you set it manually._`
+          }
+        }
+      ]
+    });
   }
 
   private async sendBreakNotification(user: any, duration: number) {
@@ -2338,6 +2636,67 @@ class SlackService {
     }
 
     return { suggest: true, reason: "No meetings scheduled soon" };
+  }
+
+  // Cancel a scheduled break
+  private async cancelScheduledBreak(suggestionId: string, slackUserId: string) {
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      // Update the break suggestion to mark as cancelled/declined
+      await storage.updateBreakSuggestion(suggestionId, {
+        accepted: false,
+        acceptedAt: new Date() // Mark when it was declined
+      });
+
+      // Log activity
+      storage.logActivity({
+        userId: user.id,
+        action: "break_cancelled",
+        details: { 
+          suggestionId,
+          trigger: "user_button_cancel"
+        }
+      }).catch(console.error);
+
+      return {
+        replace_original: true,
+        text: "📅 Break cancelled successfully. You can schedule a new one anytime with `/break`!"
+      };
+    } catch (error) {
+      console.error("Cancel scheduled break error:", error);
+      return { response_action: "clear" };
+    }
+  }
+
+  // End break early
+  private async endBreakEarly(suggestionId: string, slackUserId: string) {
+    try {
+      const user = await storage.getUserBySlackId(slackUserId);
+      if (!user) return { response_action: "clear" };
+
+      // Clear the break status
+      await this.clearBreakMode(user.id);
+
+      // Log activity
+      storage.logActivity({
+        userId: user.id,
+        action: "break_ended_early",
+        details: { 
+          suggestionId,
+          trigger: "user_button_end"
+        }
+      }).catch(console.error);
+
+      return {
+        replace_original: true,
+        text: "☕ Break ended! Hope you feel refreshed and ready to get back to work! 💪"
+      };
+    } catch (error) {
+      console.error("End break early error:", error);
+      return { response_action: "clear" };
+    }
   }
 
   // Cancel a scheduled focus session
