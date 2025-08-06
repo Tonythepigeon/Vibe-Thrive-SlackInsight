@@ -7,11 +7,13 @@ import { slackService } from "./slack";
 import { storage } from "../storage";
 
 interface CommandIntent {
-  action: 'focus' | 'break' | 'productivity' | 'greeting' | 'unsupported';
+  action: 'focus' | 'break' | 'productivity' | 'greeting' | 'scheduling' | 'unsupported';
   parameters?: {
     duration?: number;
     breakType?: string;
     end?: boolean; // Added for focus end command
+    activityType?: string; // For scheduling requests
+    timePreference?: string; // 'morning', 'afternoon', 'anytime'
   };
   confidence: number;
 }
@@ -60,22 +62,29 @@ Available commands:
 4. PRODUCTIVITY: Show productivity metrics and summaries
    - Examples: "show my productivity", "how productive was I today?", "meeting summary"
 
-5. UNSUPPORTED: Any request not related to these productivity features
+5. SCHEDULING: Analyze schedule and suggest optimal times for activities
+   - Examples: "when is ideal for a 15 minute walk?", "find me time for a coffee break", "when can I take a 30 minute break?", "my day looks packed, when should I take a walk?", "suggest a good time for lunch"
+
+6. UNSUPPORTED: Any request not related to these productivity features
    - Examples: "what's the weather?", "tell me a joke", "book a meeting"
 
-IMPORTANT: Extract duration from natural language requests:
+IMPORTANT: Extract duration and activity type from natural language requests:
 - "5 minute break" → duration: 5
 - "10 minute coffee break" → duration: 10, breakType: "coffee"
 - "focus for 30 minutes" → duration: 30
 - "25 minute focus session" → duration: 25
+- "15 minute walk" → duration: 15, activityType: "walk"
+- "30 minute lunch break" → duration: 30, activityType: "lunch"
 
 Respond ONLY with a JSON object in this exact format:
 {
-  "action": "greeting|focus|break|productivity|unsupported",
+  "action": "greeting|focus|break|productivity|scheduling|unsupported",
   "parameters": {
     "duration": 25,
     "breakType": "general",
-    "end": false
+    "end": false,
+    "activityType": "walk",
+    "timePreference": "anytime"
   },
   "confidence": 0.95
 }
@@ -85,11 +94,14 @@ Rules:
 - Use "focus" for concentration/work session requests (will start actual focus sessions)
 - Use "break" for rest/pause requests (will start actual breaks)
 - Use "productivity" for metrics/summary requests
+- Use "scheduling" for requests asking about optimal timing for activities
 - Use "unsupported" for anything else
 - Default focus duration is 25 minutes
 - Default break duration is 15 minutes
 - Default break type is "general"
 - Set "end": true if user wants to end current session
+- Extract activityType for scheduling requests (walk, lunch, coffee, break, etc.)
+- Extract timePreference if mentioned (morning, afternoon, anytime)
 - Confidence should be 0.8+ for supported actions, lower for unsupported
 - ALWAYS extract duration from natural language when mentioned`;
 
@@ -190,6 +202,8 @@ Rules:
           return await this.executeBreakCommand(intent, userId, teamId);
         case 'productivity':
           return await this.executeProductivityCommand(userId, teamId);
+        case 'scheduling':
+          return await this.executeSchedulingCommand(intent, userId, teamId);
         default:
           console.log(`Unknown action: ${intent.action}`);
           return null;
@@ -323,6 +337,50 @@ Rules:
     }
   }
 
+  private async executeSchedulingCommand(intent: CommandIntent, userId: string, teamId: string) {
+    const duration = intent.parameters?.duration || 15;
+    const activityType = intent.parameters?.activityType || 'break';
+    const timePreference = intent.parameters?.timePreference || 'anytime';
+    
+    console.log(`Analyzing schedule for user ${userId}, team ${teamId}, activity: ${activityType}, duration: ${duration} minutes`);
+    
+    try {
+      // Get user and their meetings
+      const user = await storage.getUserBySlackId(userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Get today's meetings
+      const todaysMeetings = await storage.getMeetingsByDate(user.id, new Date());
+      
+      // Analyze schedule and find optimal time slots
+      const scheduleAnalysis = await this.analyzeScheduleForActivity(todaysMeetings, duration, activityType, timePreference, user.timezone || 'America/New_York');
+      
+      return {
+        command: 'scheduling',
+        action: 'analyze',
+        duration: duration,
+        activityType: activityType,
+        timePreference: timePreference,
+        success: true,
+        executed: true,
+        result: scheduleAnalysis
+      };
+    } catch (error) {
+      console.error("Failed to analyze schedule:", error);
+      return {
+        command: 'scheduling',
+        action: 'analyze',
+        duration: duration,
+        activityType: activityType,
+        timePreference: timePreference,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
   private async generateResponse(
     intent: CommandIntent, 
     commandResult: any, 
@@ -361,6 +419,9 @@ Keep it friendly and concise. Make them feel welcome!`;
         } else if (commandResult?.command === 'productivity') {
           commandDescription = 'Generated your productivity metrics';
           executionStatus = commandResult?.executed ? '✅ Metrics ready!' : '❌ Failed to generate';
+        } else if (commandResult?.command === 'scheduling') {
+          commandDescription = `Analyzed your schedule for a ${commandResult.duration}-minute ${commandResult.activityType}`;
+          executionStatus = commandResult?.executed ? '✅ Schedule analyzed!' : '❌ Failed to analyze';
         }
 
         responsePrompt = `Based on this user request and command execution, generate a helpful, friendly response.
@@ -370,10 +431,28 @@ Command: ${commandDescription}
 Execution status: ${executionStatus}
 Command successful: ${commandResult?.success ? 'yes' : 'no'}
 
+${commandResult?.command === 'scheduling' && commandResult?.result ? `
+Schedule Analysis Results:
+- Available time slots: ${commandResult.result.availableSlots?.length || 0}
+- Total meetings today: ${commandResult.result.totalMeetings || 0}
+- Total meeting time: ${Math.round((commandResult.result.totalMeetingTime || 0) / 60)}h ${(commandResult.result.totalMeetingTime || 0) % 60}m
+- Recommendation: ${commandResult.result.recommendation || 'No specific recommendation'}
+
+Available time slots:
+${commandResult.result.availableSlots?.map((slot: any, index: number) => 
+  `${index + 1}. ${slot.startTime || slot.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} - ${slot.description}${slot.confidence ? ` (Confidence: ${Math.round(slot.confidence * 100)}%)` : ''}`
+).join('\n') || 'No available slots found'}
+
+${commandResult.result.scheduleInsights && commandResult.result.scheduleInsights.length > 0 ? `
+Schedule Insights:
+${commandResult.result.scheduleInsights.map((insight: string) => `• ${insight}`).join('\n')}
+` : ''}
+` : ''}
+
 Generate a response that:
 1. Acknowledges what the user wanted
 2. Confirms what I've done for them (since the command was actually executed)
-3. Provides 2-3 helpful tips or recommendations related to productivity
+3. ${commandResult?.command === 'scheduling' ? 'Presents the schedule analysis results in a clear, helpful way' : 'Provides 2-3 helpful tips or recommendations related to productivity'}
 4. Is warm, encouraging, and supportive
 5. Mentions that they can use slash commands for direct actions
 
@@ -405,6 +484,7 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
         focus: commandResult?.executed ? "✅ I've successfully started your focus session! Your Slack status has been updated and the timer is running. Stay focused and productive!" : "❌ I couldn't start your focus session. Please try using the `/focus` command directly.",
         break: commandResult?.executed ? `✅ I've started your ${commandResult?.duration || 15}-minute break! Your Slack status has been updated to show you're on a break. Enjoy your wellness time!` : "❌ I couldn't start your break. Please try using the `/break` command directly.",
         productivity: commandResult?.executed ? "✅ I've generated your productivity metrics! Check your DMs for your detailed summary and insights." : "❌ I couldn't generate your productivity metrics. Please try using the `/productivity` command directly.",
+        scheduling: "I'll analyze your schedule and find the best time for your activity!",
         unsupported: "I'm here to help with productivity features like focus sessions, breaks, and metrics!"
       };
 
@@ -475,6 +555,40 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
             // Generate dynamic recommendations based on user data
             const dynamicRecs = await this.generateProductivityRecommendations(commandResult);
             recommendations.push(...dynamicRecs);
+          }
+          break;
+          
+        case 'scheduling':
+          if (commandResult?.executed && commandResult?.result) {
+            const slots = commandResult.result.availableSlots || [];
+            const insights = commandResult.result.scheduleInsights || [];
+            
+            if (slots.length > 0) {
+              const bestSlot = slots[0];
+              const bestTime = bestSlot.startTime || bestSlot.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+              recommendations.push(
+                `Best time for your ${commandResult.activityType}: ${bestTime}`,
+                `You have ${slots.length} available time slots today for your activity`,
+                "Consider setting a reminder for your chosen time slot"
+              );
+              
+              // Add insights as recommendations if available
+              if (insights.length > 0) {
+                recommendations.push(...insights.slice(0, 2)); // Add up to 2 insights
+              }
+            } else {
+              recommendations.push(
+                "Your schedule is quite packed today. Consider shorter breaks or rescheduling some meetings",
+                "Try taking 5-minute micro-breaks between meetings",
+                "Consider blocking calendar time for breaks in advance"
+              );
+            }
+          } else {
+            recommendations.push(
+              "Try asking about specific activities like 'when is ideal for a 15 minute walk?'",
+              "I can analyze your schedule to find the best break times",
+              "Consider your energy levels when choosing break times"
+            );
           }
           break;
       }
@@ -670,6 +784,454 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
     } catch (error) {
       console.error("AI service health check failed:", error);
       return false;
+    }
+  }
+
+  // Intelligent LLM-powered schedule analysis method
+  private async analyzeScheduleForActivity(
+    meetings: any[], 
+    duration: number, 
+    activityType: string, 
+    timePreference: string, 
+    timezone: string
+  ): Promise<any> {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Define work hours (9 AM to 6 PM)
+    const workStart = new Date(today);
+    workStart.setHours(9, 0, 0, 0);
+    const workEnd = new Date(today);
+    workEnd.setHours(18, 0, 0, 0);
+    
+    // Sort meetings by start time and filter future meetings
+    const sortedMeetings = meetings
+      .filter(meeting => new Date(meeting.startTime) >= now)
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    
+    // If no meetings today, use LLM to suggest optimal times
+    if (sortedMeetings.length === 0) {
+      return await this.generateLLMOptimalSlots(duration, activityType, timePreference, timezone, workStart, workEnd);
+    }
+    
+    // Use LLM to analyze the schedule and find optimal slots
+    return await this.analyzeScheduleWithLLM(sortedMeetings, duration, activityType, timePreference, timezone, now, workStart, workEnd);
+  }
+
+  private async analyzeScheduleWithLLM(
+    meetings: any[], 
+    duration: number, 
+    activityType: string, 
+    timePreference: string, 
+    timezone: string,
+    currentTime: Date,
+    workStart: Date,
+    workEnd: Date
+  ): Promise<any> {
+    // Format meetings for LLM analysis
+    const formattedMeetings = meetings.map(meeting => ({
+      title: meeting.title || 'Untitled Meeting',
+      startTime: new Date(meeting.startTime).toLocaleTimeString('en-US', { 
+        timeZone: timezone, 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        hour12: true 
+      }),
+      endTime: new Date(meeting.endTime).toLocaleTimeString('en-US', { 
+        timeZone: timezone, 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        hour12: true 
+      }),
+      duration: meeting.duration || 30,
+      type: meeting.meetingType || 'video_call',
+      attendees: meeting.attendees?.length || 0
+    }));
+
+    const systemPrompt = `You are an intelligent productivity assistant that analyzes meeting schedules to find optimal times for activities like breaks, walks, and lunch.
+
+Your task is to analyze a user's meeting schedule and suggest the best time slots for their requested activity.
+
+CONTEXT:
+- Activity requested: ${activityType} (${duration} minutes)
+- Time preference: ${timePreference}
+- Current time: ${currentTime.toLocaleTimeString('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true })}
+- Work hours: 9:00 AM - 6:00 PM
+- User's timezone: ${timezone}
+
+MEETING SCHEDULE:
+${formattedMeetings.map((m, i) => `${i + 1}. ${m.title} (${m.duration}min) - ${m.startTime} to ${m.endTime} - ${m.type} - ${m.attendees} attendees`).join('\n')}
+
+ANALYSIS CRITERIA:
+1. **Energy Management**: Consider when the user might need breaks based on meeting intensity
+2. **Natural Break Patterns**: Lunch around 12-1 PM, coffee breaks in mid-morning/afternoon
+3. **Meeting Context**: High-stakes meetings might need preparation time, back-to-back meetings need buffer time
+4. **Activity-Specific Timing**: 
+   - Walks: Better in daylight hours, avoid right before important meetings
+   - Lunch: Traditional lunch hours (11:30 AM - 1:30 PM)
+   - Coffee breaks: Mid-morning (10-11 AM) or mid-afternoon (2-4 PM)
+   - Stretching: After long meetings or before important ones
+5. **Time Preference**: Respect user's morning/afternoon preference
+6. **Buffer Time**: Leave some buffer between activities and meetings
+
+Respond with a JSON object in this exact format:
+{
+  "availableSlots": [
+    {
+      "startTime": "10:30 AM",
+      "endTime": "10:45 AM", 
+      "duration": 15,
+      "type": "between_meetings",
+      "description": "Between Team Standup and Client Meeting - good for a quick coffee break",
+      "confidence": 0.9,
+      "reasoning": "Natural break point, 15-minute gap, before important client meeting"
+    }
+  ],
+  "totalMeetings": 4,
+  "totalMeetingTime": 165,
+  "recommendation": "I found 2 optimal slots for your 15-minute walk. The best time is 10:30 AM between your team standup and client meeting. This gives you a natural break and some fresh air before your important client call.",
+  "scheduleInsights": [
+    "You have a busy morning with back-to-back meetings",
+    "Good opportunity for a walk before your client meeting at 11:00 AM",
+    "Consider a longer lunch break after your project review"
+  ]
+}
+
+IMPORTANT:
+- Only suggest slots that are actually available (no conflicts with meetings)
+- Consider the activity type when suggesting timing
+- Provide confidence scores (0.1-1.0) for each slot
+- Include reasoning for why each slot is optimal
+- Be specific about timing and context
+- Consider energy levels and meeting importance`;
+    
+    try {
+      const response = await this.llm.invoke([
+        new SystemMessage(systemPrompt),
+        new HumanMessage(`Please analyze my schedule and find the best ${duration}-minute slots for a ${activityType}.`)
+      ]);
+
+      // Parse the LLM response
+      const jsonMatch = response.content.toString().match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error("No JSON found in LLM response");
+      }
+
+      const analysis = JSON.parse(jsonMatch[0]);
+      
+             // Convert time strings back to Date objects for consistency
+       const today = new Date(workStart.getFullYear(), workStart.getMonth(), workStart.getDate());
+       const availableSlots = analysis.availableSlots?.map((slot: any) => ({
+         ...slot,
+         start: this.parseTimeString(slot.startTime, today, timezone),
+         end: this.parseTimeString(slot.endTime, today, timezone)
+       })) || [];
+
+      return {
+        availableSlots,
+        totalMeetings: analysis.totalMeetings || meetings.length,
+        totalMeetingTime: analysis.totalMeetingTime || meetings.reduce((sum, m) => sum + (m.duration || 0), 0),
+        recommendation: analysis.recommendation || this.generateFallbackRecommendation(availableSlots, activityType, duration),
+        scheduleInsights: analysis.scheduleInsights || []
+      };
+
+    } catch (error) {
+      console.error("LLM schedule analysis failed, falling back to algorithmic approach:", error);
+      return await this.fallbackScheduleAnalysis(meetings, duration, activityType, timePreference, timezone, currentTime, workStart, workEnd);
+    }
+  }
+
+  private async generateLLMOptimalSlots(
+    duration: number, 
+    activityType: string, 
+    timePreference: string, 
+    timezone: string,
+    workStart: Date,
+    workEnd: Date
+  ): Promise<any> {
+    const systemPrompt = `You are an intelligent productivity assistant that suggests optimal times for activities when a user has no meetings scheduled.
+
+CONTEXT:
+- Activity requested: ${activityType} (${duration} minutes)
+- Time preference: ${timePreference}
+- Work hours: 9:00 AM - 6:00 PM
+- User's timezone: ${timezone}
+- No meetings scheduled today
+
+ANALYSIS CRITERIA:
+1. **Activity-Specific Timing**:
+   - Walks: Best in daylight (10 AM - 4 PM), avoid extreme heat/cold
+   - Lunch: Traditional lunch hours (11:30 AM - 1:30 PM)
+   - Coffee breaks: Mid-morning (10-11 AM) or mid-afternoon (2-4 PM)
+   - Stretching: Every 2-3 hours, especially after sitting
+   - Meditation: Quiet times, avoid rush hours
+2. **Energy Management**: Consider natural energy cycles
+3. **Time Preference**: Respect user's morning/afternoon preference
+4. **Productivity**: Suggest times that won't disrupt work flow
+
+Respond with a JSON object in this exact format:
+{
+  "availableSlots": [
+    {
+      "startTime": "10:00 AM",
+      "endTime": "10:15 AM",
+      "duration": 15,
+      "type": "morning_break",
+      "description": "Perfect morning coffee break time",
+      "confidence": 0.95,
+      "reasoning": "Natural break point in morning, good for energy boost"
+    }
+  ],
+  "totalMeetings": 0,
+  "totalMeetingTime": 0,
+  "recommendation": "Since you have no meetings today, I suggest taking your ${duration}-minute ${activityType} at 10:00 AM. This is an optimal time for this type of activity.",
+  "scheduleInsights": [
+    "You have a free day - great opportunity for longer breaks",
+    "Consider scheduling some focus time between breaks",
+    "Perfect day for outdoor activities if weather permits"
+  ]
+}`;
+
+    try {
+      const response = await this.llm.invoke([
+        new SystemMessage(systemPrompt),
+        new HumanMessage(`I have no meetings today. When should I take my ${duration}-minute ${activityType}?`)
+      ]);
+
+      const jsonMatch = response.content.toString().match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error("No JSON found in LLM response");
+      }
+
+      const analysis = JSON.parse(jsonMatch[0]);
+      
+      const availableSlots = analysis.availableSlots?.map((slot: any) => ({
+        ...slot,
+        start: this.parseTimeString(slot.startTime, workStart, timezone),
+        end: this.parseTimeString(slot.endTime, workStart, timezone)
+      })) || [];
+
+      return {
+        availableSlots,
+        totalMeetings: 0,
+        totalMeetingTime: 0,
+        recommendation: analysis.recommendation,
+        scheduleInsights: analysis.scheduleInsights || []
+      };
+
+    } catch (error) {
+      console.error("LLM optimal slots generation failed, falling back to default slots:", error);
+      const slots = this.generateDefaultSlots(workStart, workEnd, duration, timePreference, timezone);
+      return {
+        availableSlots: slots,
+        totalMeetings: 0,
+        totalMeetingTime: 0,
+        recommendation: this.generateRecommendation(slots, activityType, duration),
+        scheduleInsights: ["No meetings scheduled today - great opportunity for flexible timing"]
+      };
+    }
+  }
+
+  // Fallback to algorithmic approach if LLM fails
+  private async fallbackScheduleAnalysis(
+    meetings: any[], 
+    duration: number, 
+    activityType: string, 
+    timePreference: string, 
+    timezone: string,
+    currentTime: Date,
+    workStart: Date,
+    workEnd: Date
+  ): Promise<any> {
+    const availableSlots: any[] = [];
+    
+    // Check for slot before first meeting
+    const firstMeeting = meetings[0];
+    const firstMeetingStart = new Date(firstMeeting.startTime);
+    const timeBeforeFirst = firstMeetingStart.getTime() - currentTime.getTime();
+    
+    if (timeBeforeFirst >= duration * 60 * 1000) {
+      const slotStart = new Date(currentTime);
+      const slotEnd = new Date(currentTime.getTime() + duration * 60 * 1000);
+      availableSlots.push({
+        start: slotStart,
+        end: slotEnd,
+        duration: duration,
+        type: 'before_first_meeting',
+        description: `Before your first meeting at ${firstMeetingStart.toLocaleTimeString('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true })}`
+      });
+    }
+    
+    // Find gaps between meetings
+    for (let i = 0; i < meetings.length - 1; i++) {
+      const currentMeeting = meetings[i];
+      const nextMeeting = meetings[i + 1];
+      
+      const currentMeetingEnd = new Date(currentMeeting.endTime);
+      const nextMeetingStart = new Date(nextMeeting.startTime);
+      
+      const gapDuration = nextMeetingStart.getTime() - currentMeetingEnd.getTime();
+      
+      if (gapDuration >= duration * 60 * 1000) {
+        const slotStart = new Date(currentMeetingEnd);
+        const slotEnd = new Date(currentMeetingEnd.getTime() + duration * 60 * 1000);
+        
+        availableSlots.push({
+          start: slotStart,
+          end: slotEnd,
+          duration: duration,
+          type: 'between_meetings',
+          description: `Between ${currentMeeting.title || 'meeting'} and ${nextMeeting.title || 'meeting'}`
+        });
+      }
+    }
+    
+    // Check for slot after last meeting
+    const lastMeeting = meetings[meetings.length - 1];
+    const lastMeetingEnd = new Date(lastMeeting.endTime);
+    const timeAfterLast = workEnd.getTime() - lastMeetingEnd.getTime();
+    
+    if (timeAfterLast >= duration * 60 * 1000) {
+      const slotStart = new Date(lastMeetingEnd);
+      const slotEnd = new Date(lastMeetingEnd.getTime() + duration * 60 * 1000);
+      availableSlots.push({
+        start: slotStart,
+        end: slotEnd,
+        duration: duration,
+        type: 'after_last_meeting',
+        description: `After your last meeting at ${lastMeetingEnd.toLocaleTimeString('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true })}`
+      });
+    }
+    
+    const filteredSlots = this.filterSlotsByPreference(availableSlots, timePreference);
+    const totalMeetingTime = meetings.reduce((sum, meeting) => sum + (meeting.duration || 0), 0);
+    
+    return {
+      availableSlots: filteredSlots,
+      totalMeetings: meetings.length,
+      totalMeetingTime: totalMeetingTime,
+      recommendation: this.generateRecommendation(filteredSlots, activityType, duration),
+      scheduleInsights: ["Using algorithmic analysis due to LLM unavailability"]
+    };
+  }
+
+  // Helper method to parse time strings back to Date objects
+  private parseTimeString(timeStr: string, baseDate: Date, timezone: string): Date {
+    const [time, period] = timeStr.split(' ');
+    const [hours, minutes] = time.split(':').map(Number);
+    
+    let hour = hours;
+    if (period === 'PM' && hours !== 12) hour += 12;
+    if (period === 'AM' && hours === 12) hour = 0;
+    
+    const result = new Date(baseDate);
+    result.setHours(hour, minutes, 0, 0);
+    return result;
+  }
+
+  private generateFallbackRecommendation(slots: any[], activityType: string, duration: number): string {
+    if (slots.length === 0) {
+      return `I couldn't find a good ${duration}-minute slot for your ${activityType} today. Your schedule is quite packed! Consider taking shorter breaks or rescheduling some meetings.`;
+    }
+    
+    const bestSlot = slots[0];
+    const startTime = bestSlot.startTime || bestSlot.start.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+    
+    const activityDescriptions: { [key: string]: string } = {
+      'walk': 'walk',
+      'lunch': 'lunch break',
+      'coffee': 'coffee break',
+      'break': 'break',
+      'stretch': 'stretch break',
+      'meditation': 'meditation session'
+    };
+    
+    const activityDesc = activityDescriptions[activityType] || activityType;
+    
+    if (slots.length === 1) {
+      return `Perfect! I found one ideal time for your ${duration}-minute ${activityDesc}: ${startTime}. This slot fits well in your schedule.`;
+    } else {
+      return `Great! I found ${slots.length} good options for your ${duration}-minute ${activityDesc}. The best time is ${startTime}, but you also have ${slots.length - 1} other options throughout the day.`;
+    }
+  }
+
+  private generateDefaultSlots(workStart: Date, workEnd: Date, duration: number, timePreference: string, timezone: string): any[] {
+    const slots = [];
+    
+    if (timePreference === 'morning' || timePreference === 'anytime') {
+      const morningSlot = new Date(workStart);
+      morningSlot.setHours(10, 0, 0, 0); // 10 AM
+      slots.push({
+        start: morningSlot,
+        end: new Date(morningSlot.getTime() + duration * 60 * 1000),
+        duration: duration,
+        type: 'morning',
+        description: 'Morning slot (10:00 AM)'
+      });
+    }
+    
+    if (timePreference === 'afternoon' || timePreference === 'anytime') {
+      const afternoonSlot = new Date(workStart);
+      afternoonSlot.setHours(14, 0, 0, 0); // 2 PM
+      slots.push({
+        start: afternoonSlot,
+        end: new Date(afternoonSlot.getTime() + duration * 60 * 1000),
+        duration: duration,
+        type: 'afternoon',
+        description: 'Afternoon slot (2:00 PM)'
+      });
+    }
+    
+    return slots;
+  }
+
+  private filterSlotsByPreference(slots: any[], timePreference: string): any[] {
+    if (timePreference === 'anytime') {
+      return slots;
+    }
+    
+    return slots.filter(slot => {
+      const hour = slot.start.getHours();
+      if (timePreference === 'morning') {
+        return hour < 12;
+      } else if (timePreference === 'afternoon') {
+        return hour >= 12;
+      }
+      return true;
+    });
+  }
+
+  private generateRecommendation(slots: any[], activityType: string, duration: number): string {
+    if (slots.length === 0) {
+      return `I couldn't find a good ${duration}-minute slot for your ${activityType} today. Your schedule is quite packed! Consider taking shorter breaks or rescheduling some meetings.`;
+    }
+    
+    const bestSlot = slots[0]; // First slot is usually the best
+    const startTime = bestSlot.start.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+    
+    const activityDescriptions: { [key: string]: string } = {
+      'walk': 'walk',
+      'lunch': 'lunch break',
+      'coffee': 'coffee break',
+      'break': 'break',
+      'stretch': 'stretch break',
+      'meditation': 'meditation session'
+    };
+    
+    const activityDesc = activityDescriptions[activityType] || activityType;
+    
+    if (slots.length === 1) {
+      return `Perfect! I found one ideal time for your ${duration}-minute ${activityDesc}: ${startTime}. This slot fits well in your schedule.`;
+    } else {
+      return `Great! I found ${slots.length} good options for your ${duration}-minute ${activityDesc}. The best time is ${startTime}, but you also have ${slots.length - 1} other options throughout the day.`;
     }
   }
 }

@@ -78,7 +78,12 @@ class CalendarService {
         }),
       });
 
-      const tokens = await tokenResponse.json();
+      const tokens = await tokenResponse.json() as {
+        access_token: string;
+        refresh_token?: string;
+        expires_in: number;
+        scope?: string;
+      };
       
       if (!tokens.access_token) {
         throw new Error("Failed to get access token");
@@ -189,8 +194,8 @@ class CalendarService {
   private async syncOutlookCalendar(userId: string, integration: any) {
     try {
       const graphClient = Client.init({
-        authProvider: {
-          getAccessToken: async () => integration.accessToken,
+        authProvider: (done) => {
+          done(null, integration.accessToken);
         },
       });
 
@@ -199,13 +204,10 @@ class CalendarService {
       const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
       const events = await graphClient
-        .me
-        .calendar
-        .events
-        .get({
-          $filter: `start/dateTime ge '${oneWeekAgo.toISOString()}' and start/dateTime le '${oneWeekFromNow.toISOString()}'`,
-          $orderby: 'start/dateTime',
-        });
+        .api('/me/calendar/events')
+        .filter(`start/dateTime ge '${oneWeekAgo.toISOString()}' and start/dateTime le '${oneWeekFromNow.toISOString()}'`)
+        .orderby('start/dateTime')
+        .get();
 
       for (const event of events.value || []) {
         if (!event.start?.dateTime || !event.end?.dateTime) continue;
@@ -221,7 +223,7 @@ class CalendarService {
           startTime,
           endTime,
           duration,
-          attendees: event.attendees?.map(a => ({ email: a.emailAddress?.address, name: a.emailAddress?.name })) || [],
+          attendees: event.attendees?.map((a: any) => ({ email: a.emailAddress?.address, name: a.emailAddress?.name })) || [],
           source: "outlook",
           meetingType: event.isOnlineMeeting ? "video_call" : "in_person",
         };
@@ -278,13 +280,17 @@ class CalendarService {
         }),
       });
 
-      const tokens = await response.json();
+      const tokens = await response.json() as {
+        access_token?: string;
+        refresh_token?: string;
+        expires_in?: number;
+      };
 
       if (tokens.access_token) {
         await storage.updateIntegration(integration.id, {
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token || integration.refreshToken,
-          expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+          expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : undefined,
         });
       }
 
