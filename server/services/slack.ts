@@ -2087,6 +2087,9 @@ class SlackService {
       case "message":
         await this.handleMessage(event);
         break;
+      case "app_home_opened":
+        await this.handleAppHomeOpened(event);
+        break;
     }
   }
 
@@ -4030,6 +4033,126 @@ class SlackService {
         text: "❌ Failed to dismiss break. Please try again."
       };
     }
+  }
+
+  private async handleAppHomeOpened(event: any) {
+    try {
+      console.log(`🏠 App Home opened by user: ${event.user}`);
+      
+      const client = await this.getClient(event.team || undefined);
+      if (!client) {
+        console.error("No Slack client available for App Home");
+        return;
+      }
+
+      // Create the home page view using Block Kit
+      const homeView = this.createAppHomeView();
+
+      // Publish the view to the user's App Home
+      await client.views.publish({
+        user_id: event.user,
+        view: homeView
+      });
+
+      console.log(`✅ App Home view published for user: ${event.user}`);
+    } catch (error) {
+      console.error("Error handling App Home opened:", error);
+    }
+  }
+
+  private createAppHomeView(): any {
+    return {
+      type: "home",
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: "🌟 Hello and welcome to your Wellbeing partner",
+            emoji: true
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*About me and what do I do*"
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "👋 Hey hey!\n\nI'm your friendly Wellbeing Agent, your pocket-sized cheerleader for all things balance & bliss 😊✨"
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "📱 Been working non-stop? I'll nudge you to breathe, stretch, or shake it out 💃🕺\n\n📊 I'll keep an eye on your day, total meetings, hours spent, and sneak in a \"Hey, time for a break!\" when you need it most\n\n⚡ Want a quick wellness activity? Just ask!"
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Let's boost your focus, beat stress, and keep the good vibes rolling! 🌈🚀"
+          }
+        },
+        {
+          type: "divider"
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*⚙️ Preferences*\n\nTo make my service perfect for you, I need to know some things.\nPlease make sure that the below configuration is always updated:"
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "🍽️ Your usual lunch time: 13:00\n⏰ Your preferred lunch break duration: 60 minutes\n🧠 Your preferred frequency for short breaks through the day: Every 90 minutes"
+          }
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "Change Values",
+                emoji: true
+              },
+              action_id: "change_preferences",
+              style: "primary"
+            },
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "📊 View Dashboard",
+                emoji: true
+              },
+              url: `${process.env.FRONTEND_URL || 'https://vibe-thrive-slackinsight-1.onrender.com'}/dashboard`,
+              action_id: "view_dashboard"
+            }
+          ]
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: "💡 *Quick Start:* Try `/focus 25` to start a focus session or `/break` to take a wellness break!"
+            }
+          ]
+        }
+      ]
+    };
   }
 }
 
