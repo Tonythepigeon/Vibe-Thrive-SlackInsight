@@ -1510,7 +1510,7 @@ class SlackService {
       }).catch(console.error);
     }
 
-    // Start proactive break monitoring for this user
+    // Always start proactive break monitoring for this user during work hours
     this.startProactiveBreakMonitoring(user.id).catch(console.error);
 
     const today = new Date();

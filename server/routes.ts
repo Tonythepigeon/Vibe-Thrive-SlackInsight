@@ -379,13 +379,18 @@ async function skipTimeForward(userId: string, days: number) {
       }
     }
     
-    // Trigger immediate break check after time skip
+    // Automatically start break monitoring and trigger immediate break check after time skip
     try {
-      console.log(`🔄 Triggering break check for userId: ${userId} after time skip`);
+      console.log(`🔄 Starting break monitoring and checking for breaks after time skip for userId: ${userId}`);
       const { slackService } = await import('./services/slack');
+      
+      // Always ensure break monitoring is active during demo
+      await slackService.startProactiveBreakMonitoring(userId);
+      
+      // Check for immediate break needs after time skip
       await slackService.checkBreakAfterTimeSkip(userId);
     } catch (breakError) {
-      console.error("Failed to check breaks after time skip:", breakError);
+      console.error("Failed to start monitoring or check breaks after time skip:", breakError);
       // Don't fail the time skip if break check fails
     }
     
@@ -1078,6 +1083,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await generateTestMeetingData(userId);
+      
+      // Automatically start break monitoring after generating test data
+      try {
+        const { slackService } = await import('./services/slack');
+        await slackService.startProactiveBreakMonitoring(userId);
+        console.log(`Started break monitoring for user ${userId} after generating test data`);
+      } catch (error) {
+        console.error("Failed to start break monitoring after test data generation:", error);
+        // Don't fail the request if break monitoring fails
+      }
+      
       res.json({ success: true, message: "Test meeting data generated successfully" });
     } catch (error) {
       console.error("Failed to generate test data:", error);
