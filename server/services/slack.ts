@@ -2683,58 +2683,46 @@ class SlackService {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
 
-      // Try to get user token first for status setting
-      const userClient = await this.getUserClient(userId);
+      console.log(`🤖 Setting break mode via bot client (user tokens may be revoked)`);
       
-      if (userClient) {
-        // We have user token - set status directly!
-        const endTime = new Date(Date.now() + duration * 60 * 1000);
-        
-        try {
-          await userClient.users.profile.set({
-            profile: {
-              status_text: "On a coffee break",
-              status_emoji: ":coffee:",
-              status_expiration: Math.floor(endTime.getTime() / 1000)
-            }
-          });
-
-          // Get user's timezone for proper time display
-          const userTimezone = user.timezone || 'America/New_York';
-          const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
-            timeZone: userTimezone,
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          });
-
-          // Send success DM with bot client
-          const botClient = await this.getClient(user.slackTeamId || undefined);
-          await botClient.chat.postMessage({
-            channel: user.slackUserId,
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
-                }
-              }
-            ]
-          });
-
-          console.log(`Successfully set coffee break status for user ${user.slackUserId}`);
-        } catch (statusError) {
-          console.error("Failed to set break status:", statusError);
-          // Send notification even if status setting fails
-          await this.sendBreakNotification(user, duration);
-        }
-      } else {
-        // No user token - send helpful notification
-        await this.sendBreakNotification(user, duration);
+      // Use bot client directly since user tokens are revoked
+      const botClient = await this.getClient(user.slackTeamId || undefined);
+      if (!botClient) {
+        console.log(`❌ No bot client available for team ${user.slackTeamId}`);
+        return;
       }
+
+      const endTime = new Date(Date.now() + duration * 60 * 1000);
+      
+      // Get user's timezone for proper time display
+      const userTimezone = user.timezone || 'America/New_York';
+      const endTimeFormatted = endTime.toLocaleTimeString('en-US', {
+        timeZone: userTimezone,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      // Send break notification with bot client (can't update status with bot token)
+      console.log(`📱 Sending break notification to ${user.slackUserId}`);
+      await botClient.chat.postMessage({
+        channel: user.slackUserId,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n💡 *Manual Status Update:*\nTo update your Slack status, click your profile and set:\n• Status: "On a coffee break ☕"\n• Clear after: ${duration} minutes\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
+            }
+          }
+        ]
+      });
+
+      console.log(`✅ Break notification sent successfully to ${user.slackUserId}`);
+      
     } catch (error) {
       console.error("Failed to set break mode:", error);
+      // Fallback handled elsewhere if needed
     }
   }
 
