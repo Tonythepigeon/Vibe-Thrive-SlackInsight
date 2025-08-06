@@ -11,6 +11,7 @@ interface CommandIntent {
   parameters?: {
     duration?: number;
     breakType?: string;
+    end?: boolean; // Added for focus end command
   };
   confidence: number;
 }
@@ -51,10 +52,10 @@ Available commands:
    - Examples: "hi", "hello", "hey", "good morning", "good afternoon", "how are you"
    
 2. FOCUS: Start or end focus sessions (duration in minutes)
-   - Examples: "start focus for 30 minutes", "end my focus session", "I need to concentrate"
+   - Examples: "start focus for 30 minutes", "end my focus session", "I need to concentrate", "focus for 25 minutes"
    
-3. BREAK: Start breaks or manage break requests (type: general, hydration, stretch, meditation, walk)
-   - Examples: "I need a break", "start a coffee break", "time for a stretch", "take a break"
+3. BREAK: Start breaks or manage break requests (type: general, hydration, stretch, meditation, walk, coffee, lunch)
+   - Examples: "I need a break", "start a coffee break", "time for a stretch", "take a break", "give me a 5 minute break", "10 minute coffee break"
    
 4. PRODUCTIVITY: Show productivity metrics and summaries
    - Examples: "show my productivity", "how productive was I today?", "meeting summary"
@@ -62,12 +63,19 @@ Available commands:
 5. UNSUPPORTED: Any request not related to these productivity features
    - Examples: "what's the weather?", "tell me a joke", "book a meeting"
 
+IMPORTANT: Extract duration from natural language requests:
+- "5 minute break" → duration: 5
+- "10 minute coffee break" → duration: 10, breakType: "coffee"
+- "focus for 30 minutes" → duration: 30
+- "25 minute focus session" → duration: 25
+
 Respond ONLY with a JSON object in this exact format:
 {
   "action": "greeting|focus|break|productivity|unsupported",
   "parameters": {
     "duration": 25,
-    "breakType": "general"
+    "breakType": "general",
+    "end": false
   },
   "confidence": 0.95
 }
@@ -79,8 +87,11 @@ Rules:
 - Use "productivity" for metrics/summary requests
 - Use "unsupported" for anything else
 - Default focus duration is 25 minutes
+- Default break duration is 15 minutes
 - Default break type is "general"
-- Confidence should be 0.8+ for supported actions, lower for unsupported`;
+- Set "end": true if user wants to end current session
+- Confidence should be 0.8+ for supported actions, lower for unsupported
+- ALWAYS extract duration from natural language when mentioned`;
 
     return RunnableSequence.from([
       (input: { userMessage: string }) => [
@@ -206,7 +217,7 @@ Rules:
     console.log(`Starting focus execution for user ${userId}, team ${teamId}, duration: ${duration}`);
     
     // Check if this is an end request
-    if (intent.parameters && 'end' in intent.parameters) {
+    if (intent.parameters && intent.parameters.end === true) {
       // Actually execute the end focus command
       try {
         const { slackService } = await import('./slack');
@@ -255,59 +266,26 @@ Rules:
 
   private async executeBreakCommand(intent: CommandIntent, userId: string, teamId: string) {
     const breakType = intent.parameters?.breakType || 'general';
+    const duration = intent.parameters?.duration || 15; // Default to 15 minutes
     
-    console.log(`Starting break execution for user ${userId}, team ${teamId}, type: ${breakType}`);
+    console.log(`Starting break execution for user ${userId}, team ${teamId}, type: ${breakType}, duration: ${duration}`);
     
-    // Actually execute the break command - start the break directly
+    // Actually execute the break command using the proper Slack service method
     try {
       const { slackService } = await import('./slack');
       
-      // First, get the user to ensure they exist
-      const { storage } = await import('../storage');
-      let user = await storage.getUserBySlackId(userId);
-      
-      if (!user) {
-        user = await storage.createUser({
-          slackUserId: userId,
-          slackTeamId: teamId,
-          email: `${userId}@slack.local`,
-          name: "Slack User",
-        });
-      }
-      
-      // Start the break directly by setting break mode (this sets Slack status)
-      await slackService.setBreakMode(user.id, 20); // 20 minute break
-      
-      // Create a break suggestion for tracking
-      const suggestion = await storage.createBreakSuggestion({
-        userId: user.id,
-        type: breakType,
-        message: `AI initiated ${breakType} break`,
-        reason: "AI detected break request",
-        accepted: true,
-        acceptedAt: new Date()
-      });
-      
-      // Log the activity
-      storage.logActivity({
-        userId: user.id,
-        action: "break_started",
-        details: { 
-          suggestionId: suggestion.id,
-          duration: 20,
-          type: breakType,
-          trigger: "ai_command"
-        }
-      }).catch(console.error);
+      // Use the proper break command handler which will parse and validate the input
+      const breakCommandText = duration.toString() + (breakType !== 'general' ? ` ${breakType}` : '');
+      const result = await slackService.handleBreakCommand(breakCommandText, userId, teamId);
       
       return {
         command: 'break',
         action: 'start',
         breakType: breakType,
-        duration: 20,
+        duration: duration,
         success: true,
         executed: true,
-        result: { suggestionId: suggestion.id }
+        result
       };
     } catch (error) {
       console.error("Failed to process break command:", error);
@@ -315,6 +293,7 @@ Rules:
         command: 'break',
         action: 'start',
         breakType: breakType,
+        duration: duration,
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
@@ -377,7 +356,7 @@ Keep it friendly and concise. Make them feel welcome!`;
             executionStatus = commandResult?.executed ? '✅ Successfully ended!' : '❌ Failed to end';
           }
         } else if (commandResult?.command === 'break') {
-          commandDescription = `Started your ${commandResult.breakType} break`;
+          commandDescription = `Started your ${commandResult.breakType} break for ${commandResult.duration} minutes`;
           executionStatus = commandResult?.executed ? '✅ Break started successfully!' : '❌ Failed to start break';
         } else if (commandResult?.command === 'productivity') {
           commandDescription = 'Generated your productivity metrics';
@@ -424,7 +403,7 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
       const fallbackMessages = {
         greeting: "Hello! I'm your productivity assistant. I can help you with focus sessions, breaks, and productivity tracking. How can I assist you today?",
         focus: commandResult?.executed ? "✅ I've successfully started your focus session! Your Slack status has been updated and the timer is running. Stay focused and productive!" : "❌ I couldn't start your focus session. Please try using the `/focus` command directly.",
-        break: commandResult?.executed ? "✅ I've started your break! Your Slack status has been updated to show you're on a break. Enjoy your 20-minute wellness time!" : "❌ I couldn't start your break. Please try using the `/break` command directly.",
+        break: commandResult?.executed ? `✅ I've started your ${commandResult?.duration || 15}-minute break! Your Slack status has been updated to show you're on a break. Enjoy your wellness time!` : "❌ I couldn't start your break. Please try using the `/break` command directly.",
         productivity: commandResult?.executed ? "✅ I've generated your productivity metrics! Check your DMs for your detailed summary and insights." : "❌ I couldn't generate your productivity metrics. Please try using the `/productivity` command directly.",
         unsupported: "I'm here to help with productivity features like focus sessions, breaks, and metrics!"
       };
@@ -453,8 +432,9 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
           
         case 'focus':
           if (commandResult?.executed) {
+            const duration = commandResult?.duration || 25;
             recommendations.push(
-              "Your focus session is now active! Try the Pomodoro Technique: 25 minutes focused work, 5 minute break",
+              `Your ${duration}-minute focus session is now active! Try the Pomodoro Technique: ${duration} minutes focused work, 5 minute break`,
               "Turn off notifications and close unnecessary browser tabs",
               "Have water and snacks ready before starting your session"
             );
@@ -469,8 +449,9 @@ IMPORTANT: Since the command was actually executed, make sure to acknowledge tha
           
         case 'break':
           if (commandResult?.executed) {
+            const duration = commandResult?.duration || 15;
             recommendations.push(
-              "Your break is now active! Step away from your screen - even 5 minutes helps reset your mind",
+              `Your ${duration}-minute break is now active! Step away from your screen - even short breaks help reset your mind`,
               "Try some light stretching or deep breathing exercises",
               "Hydrate! Dehydration can significantly impact focus and energy"
             );
