@@ -2683,15 +2683,6 @@ class SlackService {
       const user = await storage.getUser(userId);
       if (!user || !user.slackUserId) return;
 
-      console.log(`🤖 Setting break mode via bot client (user tokens may be revoked)`);
-      
-      // Use bot client directly since user tokens are revoked
-      const botClient = await this.getClient(user.slackTeamId || undefined);
-      if (!botClient) {
-        console.log(`❌ No bot client available for team ${user.slackTeamId}`);
-        return;
-      }
-
       const endTime = new Date(Date.now() + duration * 60 * 1000);
       
       // Get user's timezone for proper time display
@@ -2703,8 +2694,54 @@ class SlackService {
         hour12: true
       });
 
-      // Send break notification with bot client (can't update status with bot token)
-      console.log(`📱 Sending break notification to ${user.slackUserId}`);
+      // Try to get user token for status setting
+      console.log(`🔑 Attempting to get user client for status update...`);
+      const userClient = await this.getUserClient(userId);
+      
+      if (userClient) {
+        try {
+          console.log(`✅ User client found! Setting Slack status...`);
+          await userClient.users.profile.set({
+            profile: {
+              status_text: "On a coffee break",
+              status_emoji: ":coffee:",
+              status_expiration: Math.floor(endTime.getTime() / 1000)
+            }
+          });
+
+          // Send success notification with bot client
+          const botClient = await this.getClient(user.slackTeamId || undefined);
+          await botClient.chat.postMessage({
+            channel: user.slackUserId,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n✅ Your Slack status has been automatically updated!\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
+                }
+              }
+            ]
+          });
+
+          console.log(`✅ Break status set successfully for ${user.slackUserId}`);
+          return;
+        } catch (statusError) {
+          console.error("Failed to set status with user token:", statusError);
+          // Fall through to bot client notification
+        }
+      } else {
+        console.log(`⚠️ No user client available - user needs to re-authorize app`);
+      }
+
+      // Fallback: Use bot client for notification only
+      console.log(`🤖 Using bot client for break notification (status update failed)`);
+      const botClient = await this.getClient(user.slackTeamId || undefined);
+      if (!botClient) {
+        console.log(`❌ No bot client available for team ${user.slackTeamId}`);
+        return;
+      }
+
       await botClient.chat.postMessage({
         channel: user.slackUserId,
         blocks: [
@@ -2712,17 +2749,16 @@ class SlackService {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n💡 *Manual Status Update:*\nTo update your Slack status, click your profile and set:\n• Status: "On a coffee break ☕"\n• Clear after: ${duration} minutes\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
+              text: `☕ *Coffee Break Started!*\n\n⏰ Duration: ${duration} minutes\n🕐 Ends at: ${endTimeFormatted}\n\n💡 *To enable automatic status updates:*\nClick this link to re-authorize the app:\nhttps://vibe-thrive-slackinsight-1.onrender.com/api/slack/install\n\n🎉 *Enjoy your break:*\n• Step away from your screen\n• Hydrate and stretch\n• Take a few deep breaths\n• You've earned this time!`
             }
           }
         ]
       });
 
-      console.log(`✅ Break notification sent successfully to ${user.slackUserId}`);
+      console.log(`✅ Break notification sent (with re-auth link) to ${user.slackUserId}`);
       
     } catch (error) {
       console.error("Failed to set break mode:", error);
-      // Fallback handled elsewhere if needed
     }
   }
 
