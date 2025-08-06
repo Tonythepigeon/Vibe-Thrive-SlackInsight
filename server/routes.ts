@@ -696,6 +696,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Clear invalid user tokens for a user (forces re-authorization for status updates)
+  app.delete("/api/slack/user/:userId/tokens", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      console.log(`🗑️ Clearing invalid user tokens for userId: ${userId}`);
+      
+      // Get user's Slack integrations
+      const integration = await storage.getIntegrationByType(userId, 'slack_user');
+      if (integration) {
+        // Delete the user token integration
+        await storage.deleteIntegration(integration.id);
+        console.log(`✅ Deleted user token integration for user ${userId}`);
+        
+        res.json({
+          status: "success",
+          message: `Cleared invalid user tokens for ${userId}. User will need to re-authorize for status updates.`,
+          userId,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        res.json({
+          status: "success",
+          message: `No user tokens found for ${userId} - already cleared.`,
+          userId,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error(`❌ Failed to clear user tokens for ${req.params.userId}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        status: "error",
+        message: `Failed to clear user tokens: ${errorMessage}`,
+        userId: req.params.userId,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Slack App endpoints - Fix context binding by using arrow functions
   app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
   app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
