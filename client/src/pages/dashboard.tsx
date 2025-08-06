@@ -159,30 +159,7 @@ export default function Dashboard() {
 
 
 
-  const testSlackMessage = async () => {
-    if (!userId) return;
-    
-    try {
-      const response = await fetch("/api/test-slack-message", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ userId }),
-      });
-      
-      if (response.ok) {
-        alert("✅ Test message sent! Check your Slack DMs for a simple test message.");
-        console.log("Slack test message sent successfully");
-      } else {
-        const error = await response.json();
-        alert(`❌ Failed to send test message: ${error.error}`);
-      }
-    } catch (error) {
-      console.error("Failed to send test message:", error);
-      alert("❌ Failed to send test message. Check console for details.");
-    }
-  };
+
 
   const formatTime = (dateString: string, timezone: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
@@ -374,12 +351,7 @@ export default function Dashboard() {
             </div>
           </div>
           
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              <Button onClick={testSlackMessage} variant="outline" className="border-purple-500 text-purple-600 hover:bg-purple-50">
-                📱 Test Slack Message
-              </Button>
-            </div>
+          <div className="text-center">
             <div className="text-sm text-gray-600">
               Break monitoring: Always enabled during work hours
             </div>
