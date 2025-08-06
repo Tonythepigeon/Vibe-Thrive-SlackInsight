@@ -735,6 +735,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check user token status (debug endpoint)
+  app.get("/api/slack/user/:userId/tokens", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      console.log(`🔍 Checking user tokens for userId: ${userId}`);
+      
+      // Get user info
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: "error",
+          message: `User ${userId} not found`,
+          userId,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Get user's Slack integration
+      const integration = await storage.getIntegrationByType(userId, 'slack_user');
+      
+      res.json({
+        status: "ok",
+        userId,
+        user: {
+          slackUserId: user.slackUserId,
+          name: user.name,
+          timezone: user.timezone
+        },
+        integration: integration ? {
+          id: integration.id,
+          type: integration.type,
+          hasAccessToken: !!integration.accessToken,
+          tokenPrefix: integration.accessToken ? integration.accessToken.substring(0, 10) + '...' : null,
+          isActive: integration.isActive,
+          createdAt: integration.createdAt
+        } : null,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error(`❌ Failed to check user tokens for ${req.params.userId}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        status: "error",
+        message: `Failed to check user tokens: ${errorMessage}`,
+        userId: req.params.userId,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Slack App endpoints - Fix context binding by using arrow functions
   app.post("/api/slack/events", (req, res) => slackService.handleSlackEvents(req, res));
   app.get("/api/slack/oauth", (req, res) => slackService.handleOAuth(req, res));
